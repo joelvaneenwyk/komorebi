@@ -1,0 +1,16 @@
+#
+# CSpell configuration file
+#
+
+version: "0.2"
+ignorePaths: []
+dictionaryDefinitions:
+  - name: komorebi
+    path: "./.cspell/komorebi.txt"
+    addWords: true
+    scope: workspace
+dictionaries:
+  - komorebi
+words: []
+ignoreWords: []
+import: []

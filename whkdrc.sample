@@ -1,3 +1,11 @@
+#
+# whkd (hotkey daemon for Windows that reacts to input events by executing commands) configuration
+#
+# - https://github.com/LGUG2Z/whkd
+# - https://github.com/koekeishiya/skhd
+# - https://github.com/baskerville/sxhkd
+#
+
 .shell powershell
 
 # Reload whkd configuration

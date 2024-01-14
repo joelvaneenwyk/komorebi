@@ -22,11 +22,13 @@ jobs:
     runs-on: windows-latest
     env:
       RUSTFLAGS: -Ctarget-feature=+crt-static
+
     strategy:
       fail-fast: false
       matrix:
         target:
           - x86_64-pc-windows-msvc
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,6 +67,7 @@ jobs:
           path: target
           key: ${{ github.base_ref }}-${{ github.head_ref }}-${{ matrix.target }}-cargo-target-dir-${{ steps.cargo-target-cache.outputs.rust_hash }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ github.base_ref }}-${{ matrix.target }}-cargo-target-dir-${{ steps.cargo-target-cache.outputs.rust_hash }}-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Install Rustup using win.rustup.rs
         run: |
           # Disable the download progress bar which can cause perf issues
@@ -72,6 +75,7 @@ jobs:
           Invoke-WebRequest https://win.rustup.rs/ -OutFile rustup-init.exe
           .\rustup-init.exe -y --default-host=x86_64-pc-windows-msvc --profile=minimal
         shell: powershell
+
       - name: Ensure stable toolchain is up to date
         run: rustup update stable
         shell: bash

@@ -1,6 +1,15 @@
 set windows-shell := ["pwsh.exe", "-NoLogo", "-Command"]
 export RUST_BACKTRACE := "full"
 
+setup:
+    $ErrorActionPreference = 'Continue'; (scoop bucket add versions -or $True) | Out-Null
+    scoop install autohotkey
+    rustup set default-host x86_64-pc-windows-msvc
+    rustup self update
+    rustup update
+    rustup component add rust-src
+    rustup component add rust-analyzer
+
 clean:
     cargo clean
 
@@ -20,13 +29,17 @@ install-komorebi:
     cargo +stable install --path komorebi --locked
 
 install:
+    mkdir -fo -p '~/komorebi-application-specific-configuration'
+    mkdir -fo -p  '~/.config/komorebi'
+    $null > '~/komorebi-application-specific-configuration/applications.yaml'
     just install-komorebic
     just install-komorebi
     komorebic ahk-asc '~/komorebi-application-specific-configuration/applications.yaml'
     komorebic pwsh-asc '~/komorebi-application-specific-configuration/applications.yaml'
-    cat '~/.config/komorebi/komorebi.generated.ps1' >komorebi.generated.ps1
-    cat '~/.config/komorebi/komorebi.generated.ahk' >komorebi.generated.ahk
-    cat '~/.config/komorebi/komorebic.lib_newV2.ahk' >komorebic.lib.ahk
+#   todo: Re-enable this after we can find a more elegant solution when files do not exist.
+#   cat '~/.config/komorebi/komorebi.generated.ps1' >komorebi.generated.ps1
+#   cat '~/.config/komorebi/komorebi.generated.ahk' >komorebi.generated.ahk
+#   cat '~/.config/komorebi/komorebic.lib_newV2.ahk' >komorebic.lib.ahk
 
 run:
     just install-komorebic

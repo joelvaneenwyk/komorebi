@@ -2,6 +2,7 @@
 
 Tiling Window Management for Windows.
 
+<!-- markdownlint-disable MD033 -->
 <p>
   <a href="https://bdsmovement.net">
     <img alt="Stand With Palestine" src="https://img.shields.io/badge/Stand_With_Palestine-%F0%9F%87%B5%F0%9F%87%B8-white">
@@ -281,9 +282,9 @@ The quickstart covers running with a static configuration file.
 If you would like to use a dynamic configuration script, ensure that you have a `komorebi.ps1` or `komorebi.ahk` file
 present, run `komorebic start --await-configuration` at a Powershell prompt, and you will see the following output:
 
-```
+```powershell
 Start-Process komorebi.exe -ArgumentList '--await-configuration' -WindowStyle hidden
-Waiting for komorebi.exe to start...Started!
+#> Waiting for komorebi.exe to start...Started!
 ```
 
 This means that `komorebi` is now running in the background, tiling all your windows, and listening for commands sent to

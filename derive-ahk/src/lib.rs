@@ -149,7 +149,7 @@ pub fn ahk_function(input: ::proc_macro::TokenStream) -> ::proc_macro::TokenStre
                                 ::std::format!(r#"
 {}({}) {{
     RunWait, komorebic.exe {} {}, , Hide
-}}"#, 
+}}"#,
                                     ::std::stringify!(#name),
                                     #arguments,
                                     ::std::stringify!(#name).to_kebab_case(),
@@ -195,7 +195,7 @@ pub fn ahk_library(input: ::proc_macro::TokenStream) -> ::proc_macro::TokenStrea
                             v.push(::std::format!(r#"
 {}() {{
     RunWait, komorebic.exe {}, , Hide
-}}"#, 
+}}"#,
                                 ::std::stringify!(#name),
                                 ::std::stringify!(#name).to_kebab_case()
                             ));

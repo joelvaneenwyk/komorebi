@@ -26,29 +26,49 @@ Tiling Window Management for Windows.
 
 ![screenshot](https://user-images.githubusercontent.com/13164844/184027064-f5a6cec2-2865-4d65-a549-a1f1da589abf.png)
 
-- [About](#about)
-- [Charitable Donations](#charitable-donations)
-- [GitHub Sponsors](#github-sponsors)
-- [Demonstrations](#demonstrations)
-- [Description](#description)
-- [Design](#design)
-- [Getting Started](#getting-started)
-  - [Quickstart](#quickstart)
-  - [GitHub Releases](#github-releases)
-  - [Building from Source](#building-from-source)
-  - [Running](#running)
-  - [Configuring](#configuring)
-  - [Common First-Time Tips](#common-first-time-tips)
-- [Development](#development)
-- [Logs and Debugging](#logs-and-debugging)
-  - [Restoring Windows](#restoring-windows)
-  - [Panics and Deadlocks](#panics-and-deadlocks)
-- [Window Manager State and Integrations](#window-manager-state-and-integrations)
-- [Window Manager Event Subscriptions](#window-manager-event-subscriptions)
-  - [Subscription Event Notification Schema](#subscription-event-notification-schema)
-  - [Communication over TCP](#communication-over-tcp)
-  - [Socket Message Schema](#socket-message-schema)
-- [Appreciations](#appreciations)
+- [komorebi](#komorebi)
+  - [About](#about)
+  - [Charitable Donations](#charitable-donations)
+  - [GitHub Sponsors](#github-sponsors)
+  - [Demonstrations](#demonstrations)
+  - [Description](#description)
+  - [Design](#design)
+  - [Getting Started](#getting-started)
+    - [Quickstart](#quickstart)
+      - [Using Autohotkey](#using-autohotkey)
+    - [GitHub Releases](#github-releases)
+    - [Building from Source](#building-from-source)
+    - [Running](#running)
+    - [Configuring](#configuring)
+      - [Migrating to a Static Configuration File](#migrating-to-a-static-configuration-file)
+      - [Configuration with `komorebic`](#configuration-with-komorebic)
+      - [AutoHotKey Helper Library for `komorebic`](#autohotkey-helper-library-for-komorebic)
+      - [Using Different AHK Executables](#using-different-ahk-executables)
+    - [Common First-Time Tips](#common-first-time-tips)
+      - [Setting a Custom KOMOREBI\_CONFIG\_HOME Directory](#setting-a-custom-komorebi_config_home-directory)
+      - [Generating Common Application-Specific Configurations](#generating-common-application-specific-configurations)
+      - [Adding an Active Window Border](#adding-an-active-window-border)
+      - [Removing Gaps](#removing-gaps)
+      - [Multiple Layout Changes on Startup](#multiple-layout-changes-on-startup)
+      - [Floating Windows](#floating-windows)
+      - [Windows Not Getting Managed](#windows-not-getting-managed)
+      - [Tray Applications](#tray-applications)
+      - [Microsoft Office Applications](#microsoft-office-applications)
+      - [Focus Follows Mouse](#focus-follows-mouse)
+      - [Mouse Follows Focus](#mouse-follows-focus)
+      - [Saving and Loading Resized Layouts](#saving-and-loading-resized-layouts)
+      - [Creating and Loading Custom Layouts](#creating-and-loading-custom-layouts)
+      - [Dynamically Changing Layouts Based on Number of Visible Window Containers](#dynamically-changing-layouts-based-on-number-of-visible-window-containers)
+  - [Development](#development)
+  - [Logs and Debugging](#logs-and-debugging)
+    - [Restoring Windows](#restoring-windows)
+    - [Panics and Deadlocks](#panics-and-deadlocks)
+  - [Window Manager State and Integrations](#window-manager-state-and-integrations)
+  - [Window Manager Event Subscriptions](#window-manager-event-subscriptions)
+    - [Subscription Event Notification Schema](#subscription-event-notification-schema)
+    - [Communication over TCP](#communication-over-tcp)
+    - [Socket Message Schema](#socket-message-schema)
+  - [Appreciations](#appreciations)
 
 ## About
 
@@ -111,7 +131,7 @@ an ["early access" label](https://github.com/LGUG2Z/komorebi/issues?q=is%3Aopen+
 video can be viewed
 [here](https://twitter.com/haxibami/status/1501560766578659332).
 
-https://user-images.githubusercontent.com/13164844/163496447-20c3ff0a-c5d8-40d1-9cc8-156c4cebf12e.mp4
+<https://user-images.githubusercontent.com/13164844/163496447-20c3ff0a-c5d8-40d1-9cc8-156c4cebf12e.mp4>
 
 [@aik2mlj](https://github.com/aik2mlj) showing _komorebi_ running on Windows 11
 with multiple workspaces, terminal emulators, a web browser, and the
@@ -119,7 +139,7 @@ with multiple workspaces, terminal emulators, a web browser, and the
 widget enabled. The original video can be viewed
 [here](https://zhuanlan.zhihu.com/p/455064481).
 
-https://user-images.githubusercontent.com/13164844/163496414-a9cde3d1-b8a7-4a7a-96fb-a8985380bc70.mp4
+<https://user-images.githubusercontent.com/13164844/163496414-a9cde3d1-b8a7-4a7a-96fb-a8985380bc70.mp4>
 
 ## Description
 
@@ -134,7 +154,7 @@ _komorebi_ doesn't handle any keyboard or mouse inputs; a third party program (e
 This architecture, popularised by [_bspwm_](https://github.com/baskerville/bspwm) on Linux and
 [_yabai_](https://github.com/koekeishiya/yabai) on macOS, is outlined as follows:
 
-```
+```ansi
           PROCESS                SOCKET
 whkd/ahk  -------->  komorebic  <------>  komorebi
 ```

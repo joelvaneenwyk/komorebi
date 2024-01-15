@@ -27,8 +27,44 @@ Tiling Window Management for Windows.
 
 ![screenshot](https://user-images.githubusercontent.com/13164844/184027064-f5a6cec2-2865-4d65-a549-a1f1da589abf.png)
 
+## About
+
+_komorebi_ is a tiling window manager that works as an extension to
+Microsoft's [Desktop Window Manager](https://docs.microsoft.com/en-us/windows/win32/dwm/dwm-overview) in Windows 10 and
+above.
+
+_komorebi_ allows you to control application windows, virtual workspaces and display monitors with a CLI which can be
+used with third-party software such as [AutoHotKey](https://github.com/Lexikos/AutoHotkey_L) to set user-defined
+keyboard shortcuts.
+
+_komorebi_ aims to make _as few modifications as possible_ to the operating system and desktop environment by default.
+Users are free to make such modifications in their own configuration files for _komorebi_, but these will remain
+opt-in and off-by-default for the foreseeable future.
+
+Translations of this document can be found in the project wiki:
+
+- [komorebi 中文用户指南](https://github.com/LGUG2Z/komorebi/wiki/README-zh) (by [@crosstyan](https://github.com/crosstyan))
+
+There is a [Discord server](https://discord.gg/mGkn66PHkx) available for _komorebi_-related discussion, help,
+troubleshooting etc. If you have any specific feature requests or bugs to report, please create an issue in this
+repository.
+
+There is a [YouTube channel](https://www.youtube.com/channel/UCeai3-do-9O4MNy9_xjO6mg) where I livestream development
+on _komorebi_. If you would like to be notified of upcoming livestreams please subscribe and turn on
+notifications. Videos of previous livestreams are also made available in
+a [dedicated playlist](https://www.youtube.com/playlist?list=PLllZnrEJu89Cpu4tMO8LAg1m6gWYWLSGJ).
+
+Articles, blog posts, demos, and videos about _komorebi_ can be added to this list by PR:
+
+- [Moving to Windows from Linux Pt 1](https://kvwu.io/posts/moving-to-windows/)
+- [Windows 下的现代化平铺窗口管理器 komorebi](https://zhuanlan.zhihu.com/p/455064481)
+- [komorebi を導入してみる](https://zenn.dev/omochice/articles/50f42a3df8f426)
+
+## Table of Contents
+
 - [komorebi](#komorebi)
   - [About](#about)
+  - [Table of Contents](#table-of-contents)
   - [Charitable Donations](#charitable-donations)
   - [GitHub Sponsors](#github-sponsors)
   - [Demonstrations](#demonstrations)
@@ -70,39 +106,6 @@ Tiling Window Management for Windows.
     - [Communication over TCP](#communication-over-tcp)
     - [Socket Message Schema](#socket-message-schema)
   - [Appreciations](#appreciations)
-
-## About
-
-_komorebi_ is a tiling window manager that works as an extension to
-Microsoft's [Desktop Window Manager](https://docs.microsoft.com/en-us/windows/win32/dwm/dwm-overview) in Windows 10 and
-above.
-
-_komorebi_ allows you to control application windows, virtual workspaces and display monitors with a CLI which can be
-used with third-party software such as [AutoHotKey](https://github.com/Lexikos/AutoHotkey_L) to set user-defined
-keyboard shortcuts.
-
-_komorebi_ aims to make _as few modifications as possible_ to the operating system and desktop environment by default.
-Users are free to make such modifications in their own configuration files for _komorebi_, but these will remain
-opt-in and off-by-default for the foreseeable future.
-
-Translations of this document can be found in the project wiki:
-
-- [komorebi 中文用户指南](https://github.com/LGUG2Z/komorebi/wiki/README-zh) (by [@crosstyan](https://github.com/crosstyan))
-
-There is a [Discord server](https://discord.gg/mGkn66PHkx) available for _komorebi_-related discussion, help,
-troubleshooting etc. If you have any specific feature requests or bugs to report, please create an issue in this
-repository.
-
-There is a [YouTube channel](https://www.youtube.com/channel/UCeai3-do-9O4MNy9_xjO6mg) where I livestream development
-on _komorebi_. If you would like to be notified of upcoming livestreams please subscribe and turn on
-notifications. Videos of previous livestreams are also made available in
-a [dedicated playlist](https://www.youtube.com/playlist?list=PLllZnrEJu89Cpu4tMO8LAg1m6gWYWLSGJ).
-
-Articles, blog posts, demos, and videos about _komorebi_ can be added to this list by PR:
-
-- [Moving to Windows from Linux Pt 1](https://kvwu.io/posts/moving-to-windows/)
-- [Windows 下的现代化平铺窗口管理器 komorebi](https://zhuanlan.zhihu.com/p/455064481)
-- [komorebi を導入してみる](https://zenn.dev/omochice/articles/50f42a3df8f426)
 
 ## Charitable Donations
 

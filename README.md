@@ -7,10 +7,10 @@ Tiling Window Management for Windows.
   <a href="https://bdsmovement.net">
     <img alt="Stand With Palestine" src="https://img.shields.io/badge/Stand_With_Palestine-%F0%9F%87%B5%F0%9F%87%B8-white">
   </a>
-  <img alt="GitHub Workflow Status" src="https://img.shields.io/github/actions/workflow/status/LGUG2Z/komorebi/.github/workflows/windows.yaml">
-  <img alt="GitHub" src="https://img.shields.io/github/license/LGUG2Z/komorebi">
-  <img alt="GitHub all releases" src="https://img.shields.io/github/downloads/LGUG2Z/komorebi/total">
-  <img alt="GitHub commits since latest release (by date) for a branch" src="https://img.shields.io/github/commits-since/LGUG2Z/komorebi/latest">
+  <img alt="GitHub Workflow Status" src="https://img.shields.io/github/actions/workflow/status/joelvaneenwyk/komorebi/.github/workflows/windows.yaml">
+  <img alt="GitHub" src="https://img.shields.io/github/license/joelvaneenwyk/komorebi">
+  <img alt="GitHub all releases" src="https://img.shields.io/github/downloads/joelvaneenwyk/komorebi/total">
+  <img alt="GitHub commits since latest release (by date) for a branch" src="https://img.shields.io/github/commits-since/joelvaneenwyk/komorebi/latest">
   <a href="https://discord.gg/mGkn66PHkx">
     <img alt="Discord" src="https://img.shields.io/discord/898554690126630914">
   </a>

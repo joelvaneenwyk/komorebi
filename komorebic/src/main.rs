@@ -2041,7 +2041,7 @@ Stop-Process -Name:whkd -ErrorAction SilentlyContinue
             println!("File successfully formatted for PRs to https://github.com/joelvaneenwyk/komorebi-application-specific-configuration");
         }
         SubCommand::FetchAppSpecificConfiguration => {
-            let content = reqwest::blocking::get("https://raw.githubusercontent.com/LGUG2Z/komorebi-application-specific-configuration/master/applications.yaml")?
+            let content = reqwest::blocking::get("https://raw.githubusercontent.com/joelvaneenwyk/komorebi-application-specific-configuration/main/applications.yaml")?
                 .text()?;
 
             let mut output_file = HOME_DIR.clone();

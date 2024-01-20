@@ -15,5 +15,21 @@
     "i3/*.conf": "i3",
     "polybar/config": "ini",
     "polybar/*.conf": "ini"
-  }
+  },
+  "powershell.analyzeOpenDocumentsOnly": false,
+  "powershell.buttons.showPanelMovementButtons": true,
+  "powershell.codeFormatting.avoidSemicolonsAsLineTerminators": false,
+  "powershell.codeFormatting.autoCorrectAliases": true,
+  "powershell.codeFormatting.pipelineIndentationStyle": "IncreaseIndentationAfterEveryPipeline",
+  "powershell.codeFormatting.preset": "Allman",
+  "powershell.codeFormatting.trimWhitespaceAroundPipe": true,
+  "powershell.codeFormatting.useConstantStrings": true,
+  "powershell.codeFormatting.useCorrectCasing": true,
+  "powershell.developer.editorServicesWaitForDebugger": false,
+  "powershell.integratedConsole.showOnStartup": false,
+  "powershell.integratedConsole.suppressStartupBanner": true,
+  "powershell.pester.useLegacyCodeLens": false,
+  "powershell.powerShellDefaultVersion": "PowerShell (x64)",
+  "prettier.endOfLine": "auto",
+  "powershell.suppressAdditionalExeNotFoundWarning": true
 }

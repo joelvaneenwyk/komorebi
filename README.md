@@ -153,7 +153,7 @@ messages it receives on a dedicated socket.
 _komorebic_ is a CLI that writes messages on _komorebi_'s socket.
 
 _komorebi_ doesn't handle any keyboard or mouse inputs; a third party program (e.g.
-[whkd](https://github.com/LGUG2Z/whkd)) is needed in order to translate keyboard and mouse events to _komorebic_ commands.
+[whkd](https://github.com/joelvaneenwyk/komorebi-hotkey-daemon)) is needed in order to translate keyboard and mouse events to _komorebic_ commands.
 
 This architecture, popularised by [_bspwm_](https://github.com/baskerville/bspwm) on Linux and
 [_yabai_](https://github.com/koekeishiya/yabai) on macOS, is outlined as follows:
@@ -329,7 +329,7 @@ There are four configuration options that you may need to set yourself, if you m
 #### Configuration with `komorebic`
 
 As previously mentioned, this project does not handle anything related to keybindings and shortcuts directly. I
-personally use [`whkd`](https://github.com/LGUG2Z/whkd) to manage my window management shortcuts, and have provided a
+personally use [`whkd`](https://github.com/joelvaneenwyk/komorebi-hotkey-daemon) to manage my window management shortcuts, and have provided a
 sample [whkdrc](whkdrc.sample) configuration that you can use as a starting point for your own.
 
 You can run `komorebic.exe` to get a full list of the commands that you can use to customise `komorebi` and create
@@ -341,7 +341,7 @@ key combinations in the `whkdrc` file.
 
 #### AutoHotKey Helper Library for `komorebic`
 
-❗️**NOTE**: This section is only relevant for people who wish to use AutoHotKey instead of [`whkd`](https://github.com/LGUG2Z/whkd).
+❗️**NOTE**: This section is only relevant for people who wish to use AutoHotKey instead of [`whkd`](https://github.com/joelvaneenwyk/komorebi-hotkey-daemon).
 
 ❗️**NOTE**: This helper library is only compatible with AutoHotKey v1.1, not with AutoHotKey v2.
 
@@ -356,7 +356,7 @@ any of the functions that it contains.
 
 #### Using Different AHK Executables
 
-❗️**NOTE**: This section is only relevant for people who wish to use AutoHotKey instead of [`whkd`](https://github.com/LGUG2Z/whkd).
+❗️**NOTE**: This section is only relevant for people who wish to use AutoHotKey instead of [`whkd`](https://github.com/joelvaneenwyk/komorebi-hotkey-daemon).
 
 The preferred way to install AutoHotKey for use with `komorebi` is to install it via `scoop`:
 

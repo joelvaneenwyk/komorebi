@@ -4,7 +4,7 @@ version = "0.1.18"
 authors = ["Jade Iqbal <jadeiqbal@fastmail.com>"]
 description = "The command-line interface for Komorebi, a tiling window manager for Windows"
 categories = ["cli", "tiling-window-manager", "windows"]
-repository = "https://github.com/LGUG2Z/komorebi"
+repository = "https://github.com/joelvaneenwyk/komorebi"
 license = "MIT"
 edition = "2021"
 

@@ -151,7 +151,7 @@ lazy_static! {
     static ref MANAGE_IDENTIFIERS: Arc<Mutex<Vec<IdWithIdentifier>>> = Arc::new(Mutex::new(vec![]));
     static ref FLOAT_IDENTIFIERS: Arc<Mutex<Vec<IdWithIdentifier>>> = Arc::new(Mutex::new(vec![
         // mstsc.exe creates these on Windows 11 when a WSL process is launched
-        // https://github.com/LGUG2Z/komorebi/issues/74
+        // https://github.com/joelvaneenwyk/komorebi/issues/74
         IdWithIdentifier {
             kind: ApplicationIdentifier::Class,
             id: String::from("OPContainerClass"),

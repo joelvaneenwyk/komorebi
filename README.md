@@ -43,7 +43,7 @@ opt-in and off-by-default for the foreseeable future.
 
 Translations of this document can be found in the project wiki:
 
-- [komorebi 中文用户指南](https://github.com/LGUG2Z/komorebi/wiki/README-zh) (by [@crosstyan](https://github.com/crosstyan))
+- [komorebi 中文用户指南](https://github.com/joelvaneenwyk/komorebi/wiki/README-zh) (by [@crosstyan](https://github.com/crosstyan))
 
 There is a [Discord server](https://discord.gg/mGkn66PHkx) available for _komorebi_-related discussion, help,
 troubleshooting etc. If you have any specific feature requests or bugs to report, please create an issue in this
@@ -126,7 +126,7 @@ There will never be any feature of `komorebi` that is gated behind sponsorship; 
 available for free in the public repository once it meets the requisite level of code quality and completion.
 
 Features-in-progress that are available in early access will be tagged in the issues with
-an ["early access" label](https://github.com/LGUG2Z/komorebi/issues?q=is%3Aopen+is%3Aissue+label%3A%22early+access%22).
+an ["early access" label](https://github.com/joelvaneenwyk/komorebi/issues?q=is%3Aopen+is%3Aissue+label%3A%22early+access%22).
 
 ## Demonstrations
 
@@ -198,7 +198,7 @@ you use `scoop` for this process.
 
 As of v0.1.17, the quickstart recommends the use of a static configuration file. If you would like to see older versions
 of this quickstart which recommend the use of dynamic configuration scripts, please refer to
-the [README file of v0.1.16](https://github.com/LGUG2Z/komorebi/tree/v0.1.16).
+the [README file of v0.1.16](https://github.com/joelvaneenwyk/komorebi/tree/v0.1.16).
 
 ```powershell
 # if using scoop
@@ -211,7 +211,7 @@ winget install LGUG2Z.whkd
 winget install LGUG2Z.komorebi
 
 # save the example configuration to ~/komorebi.json
-iwr https://raw.githubusercontent.com/LGUG2Z/komorebi/master/komorebi.example.json -OutFile $Env:USERPROFILE\komorebi.json
+iwr https://raw.githubusercontent.com/joelvaneenwyk/komorebi/main/komorebi.example.json -OutFile $Env:USERPROFILE\komorebi.json
 
 # save the latest generated app-specific config tweaks and fixes
 komorebic fetch-app-specific-configuration
@@ -220,7 +220,7 @@ komorebic fetch-app-specific-configuration
 mkdir $Env:USERPROFILE\.config -ea 0
 
 # save the sample whkdrc file with key bindings to ~/.config/whkdrc
-iwr https://raw.githubusercontent.com/LGUG2Z/komorebi/master/whkdrc.sample -OutFile $Env:USERPROFILE\.config\whkdrc
+iwr https://raw.githubusercontent.com/joelvaneenwyk/komorebi/main/whkdrc.sample -OutFile $Env:USERPROFILE\.config\whkdrc
 
 # start komorebi and whkd
 komorebic start -c $Env:USERPROFILE\komorebi.json --whkd
@@ -247,18 +247,18 @@ it solely to handle hotkey bindings.
 
 ```powershell
 # save the latest generated komorebic library to ~/komorebic.lib.ahk
-iwr https://raw.githubusercontent.com/LGUG2Z/komorebi/master/komorebic.lib.ahk -OutFile $Env:USERPROFILE\komorebic.lib.ahk
+iwr https://raw.githubusercontent.com/joelvaneenwyk/komorebi/main/komorebic.lib.ahk -OutFile $Env:USERPROFILE\komorebic.lib.ahk
 
 # save the latest generated app-specific config tweaks and fixes to ~/komorebi.generated.ahk
-iwr https://raw.githubusercontent.com/LGUG2Z/komorebi/master/komorebi.generated.ahk -OutFile $Env:USERPROFILE\komorebi.generated.ahk
+iwr https://raw.githubusercontent.com/joelvaneenwyk/komorebi/main/komorebi.generated.ahk -OutFile $Env:USERPROFILE\komorebi.generated.ahk
 
 # save the sample komorebi configuration file to ~/komorebi.ahk
-iwr https://raw.githubusercontent.com/LGUG2Z/komorebi/master/komorebi.sample.ahk -OutFile $Env:USERPROFILE\komorebi.ahk
+iwr https://raw.githubusercontent.com/joelvaneenwyk/komorebi/main/komorebi.sample.ahk -OutFile $Env:USERPROFILE\komorebi.ahk
 ```
 
 ### GitHub Releases
 
-Prebuilt binaries are available on the [releases page](https://github.com/LGUG2Z/komorebi/releases) in a `zip` archive.
+Prebuilt binaries are available on the [releases page](https://github.com/joelvaneenwyk/komorebi/releases) in a `zip` archive.
 Once downloaded, you will need to move the `komorebi.exe` and `komorebic.exe` binaries to a directory in your `Path` (
 you can see these directories by running `$Env:Path.split(";")` at a PowerShell prompt).
 
@@ -294,7 +294,7 @@ This means that `komorebi` is now running in the background, tiling all your win
 it by `komorebic`. You can similarly stop the process by running `komorebic stop`.
 
 For further information on running with a dynamic configuration script, please refer to
-the quickstart section in the [README file of v0.1.16](https://github.com/LGUG2Z/komorebi/tree/v0.1.16)
+the quickstart section in the [README file of v0.1.16](https://github.com/joelvaneenwyk/komorebi/tree/v0.1.16)
 
 ### Configuring
 
@@ -408,7 +408,7 @@ exist in this folder.
 
 A curated selection of application-specific configurations can be generated to
 help ease the setup for first-time users.
-[`komorebi-application-specific-configuration`](https://github.com/LGUG2Z/komorebi-application-specific-configuration)
+[`komorebi-application-specific-configuration`](https://github.com/joelvaneenwyk/komorebi-application-specific-configuration)
 contains YAML definitions of settings that are known to make tricky
 applications behave as expected. These YAML definitions can be used to generate
 a `ps1` or an `ahk` file which you can import at the start of your own `komorebi.ps1` or `komorebi.ahk` files,
@@ -424,7 +424,7 @@ file.
 
 ```powershell
 # Clone and enter the repository
-git clone https://github.com/LGUG2Z/komorebi-application-specific-configuration.git
+git clone https://github.com/joelvaneenwyk/komorebi-application-specific-configuration.git
 cd komorebi-application-specific-configuration
 
 # Use komorebic to generate a ps1 file
@@ -493,7 +493,7 @@ this command has been received.
 #### Floating Windows
 
 ❗️**NOTE**: A significant number of floating window rules for the most common applications are
-[already generated for you](https://github.com/LGUG2Z/komorebi/#generating-common-application-specific-configurations)
+[already generated for you](https://github.com/joelvaneenwyk/komorebi/#generating-common-application-specific-configurations)
 
 Sometimes you will want a specific application to never be tiled, and instead float all the time. You can add rules to
 enforce this behaviour:
@@ -507,7 +507,7 @@ komorebic.exe float-rule title "Control Panel"
 #### Windows Not Getting Managed
 
 ❗️**NOTE**: A significant number of force-manage window rules for the most common applications are
-[already generated for you](https://github.com/LGUG2Z/komorebi/#generating-common-application-specific-configurations)
+[already generated for you](https://github.com/joelvaneenwyk/komorebi/#generating-common-application-specific-configurations)
 
 In some rare cases, a window may not automatically be registered to be managed by `komorebi`. When this happens, you can
 manually add a rule to force `komorebi` to manage it:
@@ -521,10 +521,10 @@ komorebic.exe manage-rule exe TIM.exe
 #### Tray Applications
 
 ❗️**NOTE**: A significant number of tray application rules for the most common applications are
-[already generated for you](https://github.com/LGUG2Z/komorebi/#generating-common-application-specific-configurations)
+[already generated for you](https://github.com/joelvaneenwyk/komorebi/#generating-common-application-specific-configurations)
 
 If you are experiencing behaviour where
-[closing a window leaves a blank tile, but minimizing the same window does not](https://github.com/LGUG2Z/komorebi/issues/6)
+[closing a window leaves a blank tile, but minimizing the same window does not](https://github.com/joelvaneenwyk/komorebi/issues/6)
 , you have probably enabled a 'close/minimize to tray' option for that application. You can tell _komorebi_ to handle
 this application appropriately by identifying it via the executable name or the window class:
 
@@ -537,7 +537,7 @@ komorebic.exe identify-tray-application exe Discord.exe
 #### Microsoft Office Applications
 
 ❗️**NOTE**: Microsoft Office-specific application rules are
-[already generated for you](https://github.com/LGUG2Z/komorebi/#generating-common-application-specific-configurations)
+[already generated for you](https://github.com/joelvaneenwyk/komorebi/#generating-common-application-specific-configurations)
 
 Microsoft Office applications such as Word and Excel require certain configuration options to be set in order to be
 managed correctly. Below is an example of configuring Microsoft Word to be managed correctly by _komorebi_.
@@ -794,12 +794,12 @@ A TCP listener can optionally be exposed on a port of your choosing with the `--
 provided to `komorebi` or `komorebic start`, no TCP listener will be created.
 
 Once created, your client may send
-any [SocketMessage](https://github.com/LGUG2Z/komorebi/blob/master/komorebi-core/src/lib.rs#L37) to `komorebi` in the
+any [SocketMessage](https://github.com/joelvaneenwyk/komorebi/blob/main/komorebi-core/src/lib.rs#L37) to `komorebi` in the
 same way that `komorebic` would.
 
 This can be used if you would like to create your own alternative to `komorebic` which incorporates scripting and
 various middleware layers, and similarly it can be used if you would like to integrate `komorebi` with
-a [custom input handler](https://github.com/LGUG2Z/komorebi/issues/176#issue-1302643961).
+a [custom input handler](https://github.com/joelvaneenwyk/komorebi/issues/176#issue-1302643961).
 
 If a client sends an unrecognized message, it will be disconnected and have to reconnect before trying to communicate
 again.

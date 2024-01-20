@@ -2038,7 +2038,7 @@ Stop-Process -Name:whkd -ErrorAction SilentlyContinue
 
             file.write_all(formatted_content.as_bytes())?;
 
-            println!("File successfully formatted for PRs to https://github.com/LGUG2Z/komorebi-application-specific-configuration");
+            println!("File successfully formatted for PRs to https://github.com/joelvaneenwyk/komorebi-application-specific-configuration");
         }
         SubCommand::FetchAppSpecificConfiguration => {
             let content = reqwest::blocking::get("https://raw.githubusercontent.com/LGUG2Z/komorebi-application-specific-configuration/master/applications.yaml")?
@@ -2058,7 +2058,7 @@ Stop-Process -Name:whkd -ErrorAction SilentlyContinue
             let output_path = output_file.to_str().unwrap().to_string();
             let output_path = output_path.replace('\\', "/");
 
-            println!("Latest version of applications.yaml from https://github.com/LGUG2Z/komorebi-application-specific-configuration downloaded\n");
+            println!("Latest version of applications.yaml from https://github.com/joelvaneenwyk/komorebi-application-specific-configuration downloaded\n");
             println!(
                "You can add this to your komorebi.json static configuration file like this: \n\n\"app_specific_configuration_path\": \"{output_path}\"",
             );

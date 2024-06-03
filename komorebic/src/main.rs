@@ -1,7 +1,7 @@
 #![warn(clippy::all)]
 #![allow(clippy::missing_errors_doc, clippy::doc_markdown)]
 
-use chrono::Local;
+use chrono::Utc;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufRead;
@@ -650,6 +650,18 @@ struct Border {
 }
 
 #[derive(Parser)]
+struct Transparency {
+    #[clap(value_enum)]
+    boolean_state: BooleanState,
+}
+
+#[derive(Parser)]
+struct TransparencyAlpha {
+    /// Alpha
+    alpha: u8,
+}
+
+#[derive(Parser)]
 struct BorderColour {
     #[clap(value_enum, short, long, default_value = "single")]
     window_kind: WindowKind,
@@ -822,6 +834,9 @@ enum SubCommand {
     Gui,
     /// Show a JSON representation of visible windows
     VisibleWindows,
+    /// Show information about connected monitors
+    #[clap(alias = "monitor-info")]
+    MonitorInformation,
     /// Query the current window manager state
     #[clap(arg_required_else_help = true)]
     Query(Query),
@@ -1161,6 +1176,12 @@ enum SubCommand {
     #[clap(arg_required_else_help = true)]
     #[clap(alias = "active-window-border-offset")]
     BorderOffset(BorderOffset),
+    /// Enable or disable transparency for unfocused windows
+    #[clap(arg_required_else_help = true)]
+    Transparency(Transparency),
+    /// Set the alpha value for unfocused window transparency
+    #[clap(arg_required_else_help = true)]
+    TransparencyAlpha(TransparencyAlpha),
     /// Enable or disable focus follows mouse for the operating system
     #[clap(arg_required_else_help = true)]
     FocusFollowsMouse(FocusFollowsMouse),
@@ -1281,21 +1302,25 @@ fn main() -> Result<()> {
             }
         }
         SubCommand::Quickstart => {
-            let home_dir = dirs::home_dir().expect("could not find home dir");
-            let config_dir = home_dir.join(".config");
             let local_appdata_dir = data_local_dir().expect("could not find localdata dir");
             let data_dir = local_appdata_dir.join("komorebi");
-            std::fs::create_dir_all(&config_dir)?;
+            std::fs::create_dir_all(&*WHKD_CONFIG_DIR)?;
+            std::fs::create_dir_all(&*HOME_DIR)?;
             std::fs::create_dir_all(data_dir)?;
 
-            let komorebi_json = include_str!("../../docs/komorebi.example.json");
+            let mut komorebi_json = include_str!("../../docs/komorebi.example.json").to_string();
+            if std::env::var("KOMOREBI_CONFIG_HOME").is_ok() {
+                komorebi_json =
+                    komorebi_json.replace("Env:USERPROFILE", "Env:KOMOREBI_CONFIG_HOME");
+            }
+
             std::fs::write(HOME_DIR.join("komorebi.json"), komorebi_json)?;
 
             let applications_yaml = include_str!("../applications.yaml");
             std::fs::write(HOME_DIR.join("applications.yaml"), applications_yaml)?;
 
             let whkdrc = include_str!("../../docs/whkdrc.sample");
-            std::fs::write(config_dir.join("whkdrc"), whkdrc)?;
+            std::fs::write(WHKD_CONFIG_DIR.join("whkdrc"), whkdrc)?;
 
             println!("Example ~/komorebi.json, ~/.config/whkdrc and latest ~/applications.yaml files downloaded");
             println!("You can now run komorebic start --whkd");
@@ -1456,7 +1481,7 @@ fn main() -> Result<()> {
             }
         }
         SubCommand::Log => {
-            let timestamp = Local::now().format("%Y-%m-%d").to_string();
+            let timestamp = Utc::now().format("%Y-%m-%d").to_string();
             let color_log = std::env::temp_dir().join(format!("komorebi.log.{timestamp}"));
             let file = TailedFile::new(File::open(color_log)?);
             let locked = file.lock();
@@ -2126,6 +2151,9 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
         SubCommand::VisibleWindows => {
             print_query(&SocketMessage::VisibleWindows.as_bytes()?);
         }
+        SubCommand::MonitorInformation => {
+            print_query(&SocketMessage::MonitorInformation.as_bytes()?);
+        }
         SubCommand::Query(arg) => {
             print_query(&SocketMessage::Query(arg.state_query).as_bytes()?);
         }
@@ -2240,6 +2268,12 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
         }
         SubCommand::BorderOffset(arg) => {
             send_message(&SocketMessage::BorderOffset(arg.offset).as_bytes()?)?;
+        }
+        SubCommand::Transparency(arg) => {
+            send_message(&SocketMessage::Transparency(arg.boolean_state.into()).as_bytes()?)?;
+        }
+        SubCommand::TransparencyAlpha(arg) => {
+            send_message(&SocketMessage::TransparencyAlpha(arg.alpha).as_bytes()?)?;
         }
         SubCommand::ResizeDelta(arg) => {
             send_message(&SocketMessage::ResizeDelta(arg.pixels).as_bytes()?)?;
@@ -2383,6 +2417,11 @@ fn show_window(hwnd: HWND, command: SHOW_WINDOW_CMD) {
     unsafe { ShowWindow(hwnd, command) };
 }
 
+fn remove_transparency(hwnd: HWND) {
+    let _ = komorebi_client::Window::from(hwnd.0).opaque();
+}
+
 fn restore_window(hwnd: HWND) {
     show_window(hwnd, SW_RESTORE);
+    remove_transparency(hwnd);
 }

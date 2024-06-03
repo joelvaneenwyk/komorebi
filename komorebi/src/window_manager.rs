@@ -55,6 +55,7 @@ use crate::stackbar_manager::STACKBAR_TAB_HEIGHT;
 use crate::stackbar_manager::STACKBAR_TAB_WIDTH;
 use crate::stackbar_manager::STACKBAR_UNFOCUSED_TEXT_COLOUR;
 use crate::static_config::StaticConfig;
+use crate::transparency_manager;
 use crate::window::Window;
 use crate::window_manager_event::WindowManagerEvent;
 use crate::windows_api::WindowsApi;
@@ -907,6 +908,7 @@ impl WindowManager {
         tracing::info!("restoring all hidden windows");
 
         let no_titlebar = NO_TITLEBAR.lock();
+        let known_transparent_hwnds = transparency_manager::known_hwnds();
 
         for monitor in self.monitors_mut() {
             for workspace in monitor.workspaces_mut() {
@@ -914,6 +916,10 @@ impl WindowManager {
                     for window in containers.windows_mut() {
                         if no_titlebar.contains(&window.exe()?) {
                             window.add_title_bar()?;
+                        }
+
+                        if known_transparent_hwnds.contains(&window.hwnd) {
+                            window.opaque()?;
                         }
 
                         window.restore();
@@ -1037,6 +1043,14 @@ impl WindowManager {
 
         tracing::info!("moving container");
 
+        let focused_monitor_idx = self.focused_monitor_idx();
+
+        if focused_monitor_idx == monitor_idx {
+            if let Some(workspace_idx) = workspace_idx {
+                return self.move_container_to_workspace(workspace_idx, follow);
+            }
+        }
+
         let offset = self.work_area_offset;
         let mouse_follows_focus = self.mouse_follows_focus;
 
@@ -1070,6 +1084,11 @@ impl WindowManager {
         }
 
         target_monitor.load_focused_workspace(mouse_follows_focus)?;
+        target_monitor.update_focused_workspace(offset)?;
+
+        // this second one is for DPI changes when the target is another monitor
+        // if we don't do this the layout on the other monitor could look funny
+        // until it is interacted with again
         target_monitor.update_focused_workspace(offset)?;
 
         if follow {

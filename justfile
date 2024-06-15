@@ -22,28 +22,16 @@ fmt:
     prettier --write .github/FUNDING.yml
     prettier --write .github/workflows/windows.yaml
 
-install-komorebic:
-    cargo +stable install --path komorebic --locked
-
-install-komorebi:
-    cargo +stable install --path komorebi --locked
+install-target target:
+    cargo +stable install --path {{ target }} --locked
 
 install:
-    mkdir -fo -p '~/komorebi-application-specific-configuration'
-    mkdir -fo -p  '~/.config/komorebi'
-    $null > '~/komorebi-application-specific-configuration/applications.yaml'
-    just install-komorebic
-    just install-komorebi
-    komorebic ahk-asc '~/komorebi-application-specific-configuration/applications.yaml'
-    komorebic pwsh-asc '~/komorebi-application-specific-configuration/applications.yaml'
-#   todo: Re-enable this after we can find a more elegant solution when files do not exist.
-#   cat '~/.config/komorebi/komorebi.generated.ps1' >komorebi.generated.ps1
-#   cat '~/.config/komorebi/komorebi.generated.ahk' >komorebi.generated.ahk
-#   cat '~/.config/komorebi/komorebic.lib_newV2.ahk' >komorebic.lib.ahk
+    just install-target komorebic
+    just install-target komorebic-no-console
+    just install-target komorebi
 
 run:
-    just install-komorebic
-    cargo +stable run --bin komorebi --locked -- -a
+    cargo +stable run --bin komorebi --locked
 
 warn $RUST_LOG="warn":
     just run
@@ -58,5 +46,12 @@ trace $RUST_LOG="trace":
     just run
 
 deadlock $RUST_LOG="trace":
-    just install-komorebic
     cargo +stable run --bin komorebi --locked --features deadlock_detection
+
+docgen:
+    komorebic docgen
+    Get-ChildItem -Path "docs/cli" -Recurse -File | ForEach-Object { (Get-Content $_.FullName) -replace 'Usage: ', 'Usage: komorebic.exe ' | Set-Content $_.FullName }
+
+schemagen:
+    komorebic static-config-schema > schema.json
+    generate-schema-doc .\schema.json --config template_name=js_offline --config minify=false .\static-config-docs\

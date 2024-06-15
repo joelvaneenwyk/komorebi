@@ -1,23 +1,28 @@
-use crate::border::Border;
+use crate::border_manager;
+use crate::border_manager::ZOrder;
+use crate::border_manager::STYLE;
+use crate::border_manager::Z_ORDER;
+use crate::colour::Colour;
 use crate::current_virtual_desktop;
 use crate::monitor::Monitor;
+use crate::monitor_reconciliator;
 use crate::ring::Ring;
+use crate::stackbar_manager::STACKBAR_FOCUSED_TEXT_COLOUR;
+use crate::stackbar_manager::STACKBAR_LABEL;
+use crate::stackbar_manager::STACKBAR_MODE;
+use crate::stackbar_manager::STACKBAR_TAB_BACKGROUND_COLOUR;
+use crate::stackbar_manager::STACKBAR_TAB_HEIGHT;
+use crate::stackbar_manager::STACKBAR_TAB_WIDTH;
+use crate::stackbar_manager::STACKBAR_UNFOCUSED_TEXT_COLOUR;
+use crate::transparency_manager;
 use crate::window_manager::WindowManager;
 use crate::window_manager_event::WindowManagerEvent;
+use crate::windows_api::WindowsApi;
 use crate::workspace::Workspace;
-use crate::ALT_FOCUS_HACK;
-use crate::BORDER_COLOUR_CURRENT;
-use crate::BORDER_COLOUR_MONOCLE;
-use crate::BORDER_COLOUR_SINGLE;
-use crate::BORDER_COLOUR_STACK;
-use crate::BORDER_ENABLED;
-use crate::BORDER_HWND;
-use crate::BORDER_OFFSET;
-use crate::BORDER_OVERFLOW_IDENTIFIERS;
-use crate::BORDER_WIDTH;
 use crate::DATA_DIR;
 use crate::DEFAULT_CONTAINER_PADDING;
 use crate::DEFAULT_WORKSPACE_PADDING;
+use crate::DISPLAY_INDEX_PREFERENCES;
 use crate::FLOAT_IDENTIFIERS;
 use crate::HIDING_BEHAVIOUR;
 use crate::LAYERED_WHITELIST;
@@ -27,16 +32,22 @@ use crate::OBJECT_NAME_CHANGE_ON_LAUNCH;
 use crate::REGEX_IDENTIFIERS;
 use crate::TRAY_AND_MULTI_WINDOW_IDENTIFIERS;
 use crate::WORKSPACE_RULES;
+use komorebi_core::StackbarLabel;
+use komorebi_core::StackbarMode;
+
 use color_eyre::Result;
 use crossbeam_channel::Receiver;
-use dirs::home_dir;
-use hotwatch::notify::DebouncedEvent;
+use hotwatch::EventKind;
 use hotwatch::Hotwatch;
+use komorebi_core::config_generation::ApplicationConfiguration;
 use komorebi_core::config_generation::ApplicationConfigurationGenerator;
 use komorebi_core::config_generation::ApplicationOptions;
 use komorebi_core::config_generation::IdWithIdentifier;
+use komorebi_core::config_generation::MatchingRule;
 use komorebi_core::config_generation::MatchingStrategy;
+use komorebi_core::resolve_home_path;
 use komorebi_core::ApplicationIdentifier;
+use komorebi_core::BorderStyle;
 use komorebi_core::DefaultLayout;
 use komorebi_core::FocusFollowsMouseImplementation;
 use komorebi_core::HidingBehaviour;
@@ -62,36 +73,18 @@ use uds_windows::UnixListener;
 use uds_windows::UnixStream;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct Rgb {
-    /// Red
-    pub r: u32,
-    /// Green
-    pub g: u32,
-    /// Blue
-    pub b: u32,
-}
-
-impl From<u32> for Rgb {
-    fn from(value: u32) -> Self {
-        Self {
-            r: value & 0xff,
-            g: value >> 8 & 0xff,
-            b: value >> 16 & 0xff,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ActiveWindowBorderColours {
+pub struct BorderColours {
     /// Border colour when the container contains a single window
-    pub single: Rgb,
+    pub single: Option<Colour>,
     /// Border colour when the container contains multiple windows
-    pub stack: Rgb,
+    pub stack: Option<Colour>,
     /// Border colour when the container is in monocle mode
-    pub monocle: Rgb,
+    pub monocle: Option<Colour>,
+    /// Border colour when the container is unfocused
+    pub unfocused: Option<Colour>,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceConfig {
     /// Name
     pub name: String,
@@ -205,13 +198,19 @@ impl From<&Workspace> for WorkspaceConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MonitorConfig {
     /// Workspace configurations
     pub workspaces: Vec<WorkspaceConfig>,
     /// Monitor-specific work area offset (default: None)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub work_area_offset: Option<Rect>,
+    /// Window based work area offset (default: None)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_based_work_area_offset: Option<Rect>,
+    /// Open window limit after which the window based work area offset will no longer be applied (default: 1)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_based_work_area_offset_limit: Option<isize>,
 }
 
 impl From<&Monitor> for MonitorConfig {
@@ -224,13 +223,16 @@ impl From<&Monitor> for MonitorConfig {
         Self {
             workspaces,
             work_area_offset: value.work_area_offset(),
+            window_based_work_area_offset: value.window_based_work_area_offset(),
+            window_based_work_area_offset_limit: Some(value.window_based_work_area_offset_limit()),
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+/// The `komorebi.json` static configuration file reference for `v0.1.26`
 pub struct StaticConfig {
-    /// Dimensions of Windows' own invisible borders; don't set these yourself unless you are told to
+    /// DEPRECATED from v0.1.22: no longer required
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invisible_borders: Option<Rect>,
     /// Delta to resize windows by (default 50)
@@ -254,24 +256,35 @@ pub struct StaticConfig {
     /// Path to applications.yaml from komorebi-application-specific-configurations (default: None)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_specific_configuration_path: Option<PathBuf>,
-    /// DEPRECATED from v0.1.19: use active_window_border_width instead
+    /// Width of the window border (default: 8)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "active_window_border_width")]
     pub border_width: Option<i32>,
-    /// DEPRECATED from v0.1.19: use active_window_border_offset instead
+    /// Offset of the window border (default: -1)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub border_offset: Option<Rect>,
-    /// Width of the active window border (default: 20)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_window_border_width: Option<i32>,
-    /// Offset of the active window border (default: None)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_window_border_offset: Option<i32>,
+    #[serde(alias = "active_window_border_offset")]
+    pub border_offset: Option<i32>,
     /// Display an active window border (default: false)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_window_border: Option<bool>,
+    #[serde(alias = "active_window_border")]
+    pub border: Option<bool>,
     /// Active window border colours for different container types
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_window_border_colours: Option<ActiveWindowBorderColours>,
+    #[serde(alias = "active_window_border_colours")]
+    pub border_colours: Option<BorderColours>,
+    /// Active window border style (default: System)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "active_window_border_style")]
+    pub border_style: Option<BorderStyle>,
+    /// Active window border z-order (default: System)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border_z_order: Option<ZOrder>,
+    /// Add transparency to unfocused windows (default: false)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transparency: Option<bool>,
+    /// Alpha value for unfocused window transparency [[0-255]] (default: 200)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transparency_alpha: Option<u8>,
     /// Global default workspace padding (default: 10)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_workspace_padding: Option<i32>,
@@ -281,9 +294,6 @@ pub struct StaticConfig {
     /// Monitor and workspace configurations
     #[serde(skip_serializing_if = "Option::is_none")]
     pub monitors: Option<Vec<MonitorConfig>>,
-    /// Always send the ALT key when using focus commands (default: false)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub alt_focus_hack: Option<bool>,
     /// Which Windows signal to use when hiding windows (default: minimize)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_hiding_behaviour: Option<HidingBehaviour>,
@@ -292,37 +302,101 @@ pub struct StaticConfig {
     pub global_work_area_offset: Option<Rect>,
     /// Individual window floating rules
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub float_rules: Option<Vec<IdWithIdentifier>>,
+    pub float_rules: Option<Vec<MatchingRule>>,
     /// Individual window force-manage rules
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub manage_rules: Option<Vec<IdWithIdentifier>>,
+    pub manage_rules: Option<Vec<MatchingRule>>,
     /// Identify border overflow applications
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub border_overflow_applications: Option<Vec<IdWithIdentifier>>,
+    pub border_overflow_applications: Option<Vec<MatchingRule>>,
     /// Identify tray and multi-window applications
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tray_and_multi_window_applications: Option<Vec<IdWithIdentifier>>,
+    pub tray_and_multi_window_applications: Option<Vec<MatchingRule>>,
     /// Identify applications that have the WS_EX_LAYERED extended window style
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub layered_applications: Option<Vec<IdWithIdentifier>>,
+    pub layered_applications: Option<Vec<MatchingRule>>,
     /// Identify applications that send EVENT_OBJECT_NAMECHANGE on launch (very rare)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub object_name_change_applications: Option<Vec<IdWithIdentifier>>,
+    pub object_name_change_applications: Option<Vec<MatchingRule>>,
     /// Set monitor index preferences
     #[serde(skip_serializing_if = "Option::is_none")]
     pub monitor_index_preferences: Option<HashMap<usize, Rect>>,
+    /// Set display index preferences
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_index_preferences: Option<HashMap<usize, String>>,
+    /// Stackbar configuration options
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stackbar: Option<StackbarConfig>,
+}
+
+impl StaticConfig {
+    pub fn aliases(raw: &str) {
+        let mut map = HashMap::new();
+        map.insert("border", ["active_window_border"]);
+        map.insert("border_width", ["active_window_border_width"]);
+        map.insert("border_offset", ["active_window_border_offset"]);
+        map.insert("border_colours", ["active_window_border_colours"]);
+        map.insert("border_style", ["active_window_border_style"]);
+
+        let mut display = false;
+
+        for aliases in map.values() {
+            for a in aliases {
+                if raw.contains(a) {
+                    display = true;
+                }
+            }
+        }
+
+        if display {
+            println!("\nYour configuration file contains some options that have been renamed or deprecated:\n");
+            for (canonical, aliases) in map {
+                for alias in aliases {
+                    if raw.contains(alias) {
+                        println!(r#""{alias}" is now "{canonical}""#);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn deprecated(raw: &str) {
+        let deprecated = ["invisible_borders"];
+
+        for option in deprecated {
+            if raw.contains(option) {
+                println!(r#""{option}" is deprecated and can be removed"#);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct TabsConfig {
+    /// Width of a stackbar tab
+    width: Option<i32>,
+    /// Focused tab text colour
+    focused_text: Option<Colour>,
+    /// Unfocused tab text colour
+    unfocused_text: Option<Colour>,
+    /// Tab background colour
+    background: Option<Colour>,
+}
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct StackbarConfig {
+    /// Stackbar height
+    pub height: Option<i32>,
+    /// Stackbar height
+    pub label: Option<StackbarLabel>,
+    /// Stackbar mode
+    pub mode: Option<StackbarMode>,
+    /// Stackbar tab configuration options
+    pub tabs: Option<TabsConfig>,
 }
 
 impl From<&WindowManager> for StaticConfig {
     #[allow(clippy::too_many_lines)]
     fn from(value: &WindowManager) -> Self {
-        let default_invisible_borders = Rect {
-            left: 7,
-            top: 0,
-            right: 14,
-            bottom: 7,
-        };
-
         let mut monitors = vec![];
         for m in value.monitors() {
             monitors.push(MonitorConfig::from(m));
@@ -373,30 +447,21 @@ impl From<&WindowManager> for StaticConfig {
             }
         }
 
-        let border_colours = if BORDER_COLOUR_SINGLE.load(Ordering::SeqCst) == 0 {
+        let border_colours = if border_manager::FOCUSED.load(Ordering::SeqCst) == 0 {
             None
         } else {
-            Option::from(ActiveWindowBorderColours {
-                single: Rgb::from(BORDER_COLOUR_SINGLE.load(Ordering::SeqCst)),
-                stack: Rgb::from(if BORDER_COLOUR_STACK.load(Ordering::SeqCst) == 0 {
-                    BORDER_COLOUR_SINGLE.load(Ordering::SeqCst)
-                } else {
-                    BORDER_COLOUR_STACK.load(Ordering::SeqCst)
-                }),
-                monocle: Rgb::from(if BORDER_COLOUR_MONOCLE.load(Ordering::SeqCst) == 0 {
-                    BORDER_COLOUR_SINGLE.load(Ordering::SeqCst)
-                } else {
-                    BORDER_COLOUR_MONOCLE.load(Ordering::SeqCst)
-                }),
+            Option::from(BorderColours {
+                single: Option::from(Colour::from(border_manager::FOCUSED.load(Ordering::SeqCst))),
+                stack: Option::from(Colour::from(border_manager::STACK.load(Ordering::SeqCst))),
+                monocle: Option::from(Colour::from(border_manager::MONOCLE.load(Ordering::SeqCst))),
+                unfocused: Option::from(Colour::from(
+                    border_manager::UNFOCUSED.load(Ordering::SeqCst),
+                )),
             })
         };
 
         Self {
-            invisible_borders: if value.invisible_borders == default_invisible_borders {
-                None
-            } else {
-                Option::from(value.invisible_borders)
-            },
+            invisible_borders: None,
             resize_delta: Option::from(value.resize_delta),
             window_container_behaviour: Option::from(value.window_container_behaviour),
             cross_monitor_move_behaviour: Option::from(value.cross_monitor_move_behaviour),
@@ -406,14 +471,18 @@ impl From<&WindowManager> for StaticConfig {
             focus_follows_mouse: value.focus_follows_mouse,
             mouse_follows_focus: Option::from(value.mouse_follows_focus),
             app_specific_configuration_path: None,
-            active_window_border_width: Option::from(BORDER_WIDTH.load(Ordering::SeqCst)),
-            active_window_border_offset: BORDER_OFFSET
-                .lock()
-                .map_or(None, |offset| Option::from(offset.left)),
-            border_width: None,
-            border_offset: None,
-            active_window_border: Option::from(BORDER_ENABLED.load(Ordering::SeqCst)),
-            active_window_border_colours: border_colours,
+            border_width: Option::from(border_manager::BORDER_WIDTH.load(Ordering::SeqCst)),
+            border_offset: Option::from(border_manager::BORDER_OFFSET.load(Ordering::SeqCst)),
+            border: Option::from(border_manager::BORDER_ENABLED.load(Ordering::SeqCst)),
+            border_colours,
+            transparency: Option::from(
+                transparency_manager::TRANSPARENCY_ENABLED.load(Ordering::SeqCst),
+            ),
+            transparency_alpha: Option::from(
+                transparency_manager::TRANSPARENCY_ALPHA.load(Ordering::SeqCst),
+            ),
+            border_style: Option::from(STYLE.load()),
+            border_z_order: Option::from(Z_ORDER.load()),
             default_workspace_padding: Option::from(
                 DEFAULT_WORKSPACE_PADDING.load(Ordering::SeqCst),
             ),
@@ -421,7 +490,6 @@ impl From<&WindowManager> for StaticConfig {
                 DEFAULT_CONTAINER_PADDING.load(Ordering::SeqCst),
             ),
             monitors: Option::from(monitors),
-            alt_focus_hack: Option::from(ALT_FOCUS_HACK.load(Ordering::SeqCst)),
             window_hiding_behaviour: Option::from(*HIDING_BEHAVIOUR.lock()),
             global_work_area_offset: value.work_area_offset,
             float_rules: None,
@@ -431,6 +499,8 @@ impl From<&WindowManager> for StaticConfig {
             layered_applications: None,
             object_name_change_applications: None,
             monitor_index_preferences: Option::from(MONITOR_INDEX_PREFERENCES.lock().clone()),
+            display_index_preferences: Option::from(DISPLAY_INDEX_PREFERENCES.lock().clone()),
+            stackbar: None,
         }
     }
 }
@@ -440,16 +510,17 @@ impl StaticConfig {
     fn apply_globals(&mut self) -> Result<()> {
         if let Some(monitor_index_preferences) = &self.monitor_index_preferences {
             let mut preferences = MONITOR_INDEX_PREFERENCES.lock();
-            *preferences = monitor_index_preferences.clone();
+            preferences.clone_from(monitor_index_preferences);
+        }
+
+        if let Some(display_index_preferences) = &self.display_index_preferences {
+            let mut preferences = DISPLAY_INDEX_PREFERENCES.lock();
+            preferences.clone_from(display_index_preferences);
         }
 
         if let Some(behaviour) = self.window_hiding_behaviour {
             let mut window_hiding_behaviour = HIDING_BEHAVIOUR.lock();
             *window_hiding_behaviour = behaviour;
-        }
-
-        if let Some(hack) = self.alt_focus_hack {
-            ALT_FOCUS_HACK.store(hack, Ordering::SeqCst);
         }
 
         if let Some(container) = self.default_container_padding {
@@ -460,287 +531,148 @@ impl StaticConfig {
             DEFAULT_WORKSPACE_PADDING.store(workspace, Ordering::SeqCst);
         }
 
-        self.active_window_border_width.map_or_else(
-            || {
-                BORDER_WIDTH.store(20, Ordering::SeqCst);
-            },
-            |width| {
-                BORDER_WIDTH.store(width, Ordering::SeqCst);
-            },
-        );
-        self.active_window_border_offset.map_or_else(
-            || {
-                let mut border_offset = BORDER_OFFSET.lock();
-                *border_offset = None;
-            },
-            |offset| {
-                let new_border_offset = Rect {
-                    left: offset,
-                    top: offset,
-                    right: offset * 2,
-                    bottom: offset * 2,
-                };
+        border_manager::BORDER_WIDTH.store(self.border_width.unwrap_or(8), Ordering::SeqCst);
+        border_manager::BORDER_OFFSET.store(self.border_offset.unwrap_or(-1), Ordering::SeqCst);
 
-                let mut border_offset = BORDER_OFFSET.lock();
-                *border_offset = Some(new_border_offset);
-            },
-        );
-
-        if let Some(colours) = &self.active_window_border_colours {
-            BORDER_COLOUR_SINGLE.store(
-                colours.single.r | (colours.single.g << 8) | (colours.single.b << 16),
-                Ordering::SeqCst,
-            );
-            BORDER_COLOUR_CURRENT.store(
-                colours.single.r | (colours.single.g << 8) | (colours.single.b << 16),
-                Ordering::SeqCst,
-            );
-            BORDER_COLOUR_STACK.store(
-                colours.stack.r | (colours.stack.g << 8) | (colours.stack.b << 16),
-                Ordering::SeqCst,
-            );
-            BORDER_COLOUR_MONOCLE.store(
-                colours.monocle.r | (colours.monocle.g << 8) | (colours.monocle.b << 16),
-                Ordering::SeqCst,
-            );
+        if let Some(enabled) = &self.border {
+            border_manager::BORDER_ENABLED.store(*enabled, Ordering::SeqCst);
         }
+
+        if let Some(colours) = &self.border_colours {
+            if let Some(single) = colours.single {
+                border_manager::FOCUSED.store(u32::from(single), Ordering::SeqCst);
+            }
+
+            if let Some(stack) = colours.stack {
+                border_manager::STACK.store(u32::from(stack), Ordering::SeqCst);
+            }
+
+            if let Some(monocle) = colours.monocle {
+                border_manager::MONOCLE.store(u32::from(monocle), Ordering::SeqCst);
+            }
+
+            if let Some(unfocused) = colours.unfocused {
+                border_manager::UNFOCUSED.store(u32::from(unfocused), Ordering::SeqCst);
+            }
+        }
+
+        STYLE.store(self.border_style.unwrap_or_default());
+
+        transparency_manager::TRANSPARENCY_ENABLED
+            .store(self.transparency.unwrap_or(false), Ordering::SeqCst);
+        transparency_manager::TRANSPARENCY_ALPHA
+            .store(self.transparency_alpha.unwrap_or(200), Ordering::SeqCst);
 
         let mut float_identifiers = FLOAT_IDENTIFIERS.lock();
         let mut regex_identifiers = REGEX_IDENTIFIERS.lock();
         let mut manage_identifiers = MANAGE_IDENTIFIERS.lock();
         let mut tray_and_multi_window_identifiers = TRAY_AND_MULTI_WINDOW_IDENTIFIERS.lock();
-        let mut border_overflow_identifiers = BORDER_OVERFLOW_IDENTIFIERS.lock();
         let mut object_name_change_identifiers = OBJECT_NAME_CHANGE_ON_LAUNCH.lock();
         let mut layered_identifiers = LAYERED_WHITELIST.lock();
 
-        if let Some(float) = &mut self.float_rules {
-            for identifier in float {
-                if identifier.matching_strategy.is_none() {
-                    identifier.matching_strategy = Option::from(MatchingStrategy::Legacy);
-                }
-
-                if !float_identifiers.contains(identifier) {
-                    float_identifiers.push(identifier.clone());
-
-                    if matches!(identifier.matching_strategy, Some(MatchingStrategy::Regex)) {
-                        let re = Regex::new(&identifier.id)?;
-                        regex_identifiers.insert(identifier.id.clone(), re);
-                    }
-                }
-            }
+        if let Some(rules) = &mut self.float_rules {
+            populate_rules(rules, &mut float_identifiers, &mut regex_identifiers)?;
         }
 
-        if let Some(manage) = &mut self.manage_rules {
-            for identifier in manage {
-                if identifier.matching_strategy.is_none() {
-                    identifier.matching_strategy = Option::from(MatchingStrategy::Legacy);
-                }
-
-                if !manage_identifiers.contains(identifier) {
-                    manage_identifiers.push(identifier.clone());
-
-                    if matches!(identifier.matching_strategy, Some(MatchingStrategy::Regex)) {
-                        let re = Regex::new(&identifier.id)?;
-                        regex_identifiers.insert(identifier.id.clone(), re);
-                    }
-                }
-            }
+        if let Some(rules) = &mut self.manage_rules {
+            populate_rules(rules, &mut manage_identifiers, &mut regex_identifiers)?;
         }
 
-        if let Some(identifiers) = &mut self.object_name_change_applications {
-            for identifier in identifiers {
-                if identifier.matching_strategy.is_none() {
-                    identifier.matching_strategy = Option::from(MatchingStrategy::Legacy);
-                }
-
-                if !object_name_change_identifiers.contains(identifier) {
-                    object_name_change_identifiers.push(identifier.clone());
-
-                    if matches!(identifier.matching_strategy, Some(MatchingStrategy::Regex)) {
-                        let re = Regex::new(&identifier.id)?;
-                        regex_identifiers.insert(identifier.id.clone(), re);
-                    }
-                }
-            }
+        if let Some(rules) = &mut self.object_name_change_applications {
+            populate_rules(
+                rules,
+                &mut object_name_change_identifiers,
+                &mut regex_identifiers,
+            )?;
         }
 
-        if let Some(identifiers) = &mut self.layered_applications {
-            for identifier in identifiers {
-                if identifier.matching_strategy.is_none() {
-                    identifier.matching_strategy = Option::from(MatchingStrategy::Legacy);
-                }
-
-                if !border_overflow_identifiers.contains(identifier) {
-                    border_overflow_identifiers.push(identifier.clone());
-
-                    if matches!(identifier.matching_strategy, Some(MatchingStrategy::Regex)) {
-                        let re = Regex::new(&identifier.id)?;
-                        regex_identifiers.insert(identifier.id.clone(), re);
-                    }
-                }
-            }
+        if let Some(rules) = &mut self.layered_applications {
+            populate_rules(rules, &mut layered_identifiers, &mut regex_identifiers)?;
         }
 
-        if let Some(identifiers) = &mut self.border_overflow_applications {
-            for identifier in identifiers {
-                if identifier.matching_strategy.is_none() {
-                    identifier.matching_strategy = Option::from(MatchingStrategy::Legacy);
-                }
-
-                if !border_overflow_identifiers.contains(identifier) {
-                    border_overflow_identifiers.push(identifier.clone());
-
-                    if matches!(identifier.matching_strategy, Some(MatchingStrategy::Regex)) {
-                        let re = Regex::new(&identifier.id)?;
-                        regex_identifiers.insert(identifier.id.clone(), re);
-                    }
-                }
-            }
+        if let Some(rules) = &mut self.tray_and_multi_window_applications {
+            populate_rules(
+                rules,
+                &mut tray_and_multi_window_identifiers,
+                &mut regex_identifiers,
+            )?;
         }
 
-        if let Some(identifiers) = &mut self.tray_and_multi_window_applications {
-            for identifier in identifiers {
-                if identifier.matching_strategy.is_none() {
-                    identifier.matching_strategy = Option::from(MatchingStrategy::Legacy);
+        if let Some(stackbar) = &self.stackbar {
+            if let Some(height) = &stackbar.height {
+                STACKBAR_TAB_HEIGHT.store(*height, Ordering::SeqCst);
+            }
+
+            if let Some(label) = &stackbar.label {
+                STACKBAR_LABEL.store(*label);
+            }
+
+            if let Some(mode) = &stackbar.mode {
+                STACKBAR_MODE.store(*mode);
+            }
+
+            if let Some(tabs) = &stackbar.tabs {
+                if let Some(background) = &tabs.background {
+                    STACKBAR_TAB_BACKGROUND_COLOUR.store((*background).into(), Ordering::SeqCst);
                 }
 
-                if !tray_and_multi_window_identifiers.contains(identifier) {
-                    tray_and_multi_window_identifiers.push(identifier.clone());
+                if let Some(colour) = &tabs.focused_text {
+                    STACKBAR_FOCUSED_TEXT_COLOUR.store((*colour).into(), Ordering::SeqCst);
+                }
 
-                    if matches!(identifier.matching_strategy, Some(MatchingStrategy::Regex)) {
-                        let re = Regex::new(&identifier.id)?;
-                        regex_identifiers.insert(identifier.id.clone(), re);
-                    }
+                if let Some(colour) = &tabs.unfocused_text {
+                    STACKBAR_UNFOCUSED_TEXT_COLOUR.store((*colour).into(), Ordering::SeqCst);
+                }
+
+                if let Some(width) = &tabs.width {
+                    STACKBAR_TAB_WIDTH.store(*width, Ordering::SeqCst);
                 }
             }
         }
 
         if let Some(path) = &self.app_specific_configuration_path {
-            let stringified = path.to_string_lossy();
-            let stringified = stringified.replace(
-                "$Env:USERPROFILE",
-                &home_dir().expect("no home dir").to_string_lossy(),
-            );
-
-            let content = std::fs::read_to_string(stringified)?;
+            let path = resolve_home_path(path)?;
+            let content = std::fs::read_to_string(path)?;
             let asc = ApplicationConfigurationGenerator::load(&content)?;
 
             for mut entry in asc {
-                if let Some(float) = entry.float_identifiers {
-                    for f in float {
-                        let mut without_comment: IdWithIdentifier = f.into();
-                        if without_comment.matching_strategy.is_none() {
-                            without_comment.matching_strategy =
-                                Option::from(MatchingStrategy::Legacy);
-                        }
-
-                        if !float_identifiers.contains(&without_comment) {
-                            float_identifiers.push(without_comment.clone());
-
-                            if matches!(
-                                without_comment.matching_strategy,
-                                Some(MatchingStrategy::Regex)
-                            ) {
-                                let re = Regex::new(&without_comment.id)?;
-                                regex_identifiers.insert(without_comment.id.clone(), re);
-                            }
-                        }
-                    }
+                if let Some(rules) = &mut entry.float_identifiers {
+                    populate_rules(rules, &mut float_identifiers, &mut regex_identifiers)?;
                 }
-                if let Some(options) = entry.options {
+
+                if let Some(ref options) = entry.options {
+                    let options = options.clone();
                     for o in options {
                         match o {
                             ApplicationOptions::ObjectNameChange => {
-                                if entry.identifier.matching_strategy.is_none() {
-                                    entry.identifier.matching_strategy =
-                                        Option::from(MatchingStrategy::Legacy);
-                                }
-
-                                if !object_name_change_identifiers.contains(&entry.identifier) {
-                                    object_name_change_identifiers.push(entry.identifier.clone());
-
-                                    if matches!(
-                                        entry.identifier.matching_strategy,
-                                        Some(MatchingStrategy::Regex)
-                                    ) {
-                                        let re = Regex::new(&entry.identifier.id)?;
-                                        regex_identifiers.insert(entry.identifier.id.clone(), re);
-                                    }
-                                }
+                                populate_option(
+                                    &mut entry,
+                                    &mut object_name_change_identifiers,
+                                    &mut regex_identifiers,
+                                )?;
                             }
                             ApplicationOptions::Layered => {
-                                if entry.identifier.matching_strategy.is_none() {
-                                    entry.identifier.matching_strategy =
-                                        Option::from(MatchingStrategy::Legacy);
-                                }
-
-                                if !layered_identifiers.contains(&entry.identifier) {
-                                    layered_identifiers.push(entry.identifier.clone());
-
-                                    if matches!(
-                                        entry.identifier.matching_strategy,
-                                        Some(MatchingStrategy::Regex)
-                                    ) {
-                                        let re = Regex::new(&entry.identifier.id)?;
-                                        regex_identifiers.insert(entry.identifier.id.clone(), re);
-                                    }
-                                }
-                            }
-                            ApplicationOptions::BorderOverflow => {
-                                if entry.identifier.matching_strategy.is_none() {
-                                    entry.identifier.matching_strategy =
-                                        Option::from(MatchingStrategy::Legacy);
-                                }
-
-                                if !border_overflow_identifiers.contains(&entry.identifier) {
-                                    border_overflow_identifiers.push(entry.identifier.clone());
-
-                                    if matches!(
-                                        entry.identifier.matching_strategy,
-                                        Some(MatchingStrategy::Regex)
-                                    ) {
-                                        let re = Regex::new(&entry.identifier.id)?;
-                                        regex_identifiers.insert(entry.identifier.id.clone(), re);
-                                    }
-                                }
+                                populate_option(
+                                    &mut entry,
+                                    &mut layered_identifiers,
+                                    &mut regex_identifiers,
+                                )?;
                             }
                             ApplicationOptions::TrayAndMultiWindow => {
-                                if entry.identifier.matching_strategy.is_none() {
-                                    entry.identifier.matching_strategy =
-                                        Option::from(MatchingStrategy::Legacy);
-                                }
-
-                                if !tray_and_multi_window_identifiers.contains(&entry.identifier) {
-                                    tray_and_multi_window_identifiers
-                                        .push(entry.identifier.clone());
-
-                                    if matches!(
-                                        entry.identifier.matching_strategy,
-                                        Some(MatchingStrategy::Regex)
-                                    ) {
-                                        let re = Regex::new(&entry.identifier.id)?;
-                                        regex_identifiers.insert(entry.identifier.id.clone(), re);
-                                    }
-                                }
+                                populate_option(
+                                    &mut entry,
+                                    &mut tray_and_multi_window_identifiers,
+                                    &mut regex_identifiers,
+                                )?;
                             }
                             ApplicationOptions::Force => {
-                                if entry.identifier.matching_strategy.is_none() {
-                                    entry.identifier.matching_strategy =
-                                        Option::from(MatchingStrategy::Legacy);
-                                }
-
-                                if !manage_identifiers.contains(&entry.identifier) {
-                                    manage_identifiers.push(entry.identifier.clone());
-
-                                    if matches!(
-                                        entry.identifier.matching_strategy,
-                                        Some(MatchingStrategy::Regex)
-                                    ) {
-                                        let re = Regex::new(&entry.identifier.id)?;
-                                        regex_identifiers.insert(entry.identifier.id.clone(), re);
-                                    }
-                                }
+                                populate_option(
+                                    &mut entry,
+                                    &mut manage_identifiers,
+                                    &mut regex_identifiers,
+                                )?;
                             }
+                            ApplicationOptions::BorderOverflow => {} // deprecated
                         }
                     }
                 }
@@ -753,7 +685,7 @@ impl StaticConfig {
     #[allow(clippy::too_many_lines)]
     pub fn preload(
         path: &PathBuf,
-        incoming: Arc<Mutex<Receiver<WindowManagerEvent>>>,
+        incoming: Receiver<WindowManagerEvent>,
     ) -> Result<WindowManager> {
         let content = std::fs::read_to_string(path)?;
         let mut value: Self = serde_json::from_str(&content)?;
@@ -762,7 +694,7 @@ impl StaticConfig {
         let socket = DATA_DIR.join("komorebi.sock");
 
         match std::fs::remove_file(&socket) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(error) => match error.kind() {
                 // Doing this because ::exists() doesn't work reliably on Windows via IntelliJ
                 ErrorKind::NotFound => {}
@@ -776,16 +708,9 @@ impl StaticConfig {
 
         let mut wm = WindowManager {
             monitors: Ring::default(),
-            monitor_cache: HashMap::new(),
             incoming_events: incoming,
             command_listener: listener,
             is_paused: false,
-            invisible_borders: value.invisible_borders.unwrap_or(Rect {
-                left: 7,
-                top: 0,
-                right: 14,
-                bottom: 7,
-            }),
             virtual_desktop_id: current_virtual_desktop(),
             work_area_offset: value.global_work_area_offset,
             window_container_behaviour: value
@@ -806,12 +731,20 @@ impl StaticConfig {
             already_moved_window_handles: Arc::new(Mutex::new(HashSet::new())),
         };
 
+        match value.focus_follows_mouse {
+            None => WindowsApi::disable_focus_follows_mouse()?,
+            Some(FocusFollowsMouseImplementation::Windows) => {
+                WindowsApi::enable_focus_follows_mouse()?;
+            }
+            Some(FocusFollowsMouseImplementation::Komorebi) => {}
+        };
+
         let bytes = SocketMessage::ReloadStaticConfiguration(path.clone()).as_bytes()?;
 
-        wm.hotwatch.watch(path, move |event| match event {
+        wm.hotwatch.watch(path, move |event| match event.kind {
             // Editing in Notepad sends a NoticeWrite while editing in (Neo)Vim sends
             // a NoticeRemove, presumably because of the use of swap files?
-            DebouncedEvent::NoticeWrite(_) | DebouncedEvent::NoticeRemove(_) => {
+            EventKind::Modify(_) | EventKind::Remove(_) => {
                 let socket = DATA_DIR.join("komorebi.sock");
                 let mut stream =
                     UnixStream::connect(socket).expect("could not connect to komorebi.sock");
@@ -832,9 +765,20 @@ impl StaticConfig {
 
         if let Some(monitors) = value.monitors {
             for (i, monitor) in monitors.iter().enumerate() {
+                {
+                    let display_index_preferences = DISPLAY_INDEX_PREFERENCES.lock();
+                    if let Some(device_id) = display_index_preferences.get(&i) {
+                        monitor_reconciliator::insert_in_monitor_cache(device_id, monitor.clone());
+                    }
+                }
+
                 if let Some(m) = wm.monitors_mut().get_mut(i) {
                     m.ensure_workspace_count(monitor.workspaces.len());
                     m.set_work_area_offset(monitor.work_area_offset);
+                    m.set_window_based_work_area_offset(monitor.window_based_work_area_offset);
+                    m.set_window_based_work_area_offset_limit(
+                        monitor.window_based_work_area_offset_limit.unwrap_or(1),
+                    );
 
                     for (j, ws) in m.workspaces_mut().iter_mut().enumerate() {
                         ws.load_static_config(
@@ -862,13 +806,8 @@ impl StaticConfig {
             }
         }
 
-        if value.active_window_border == Some(true) {
-            if BORDER_HWND.load(Ordering::SeqCst) == 0 {
-                Border::create("komorebi-border-window")?;
-            }
-
-            BORDER_ENABLED.store(true, Ordering::SeqCst);
-            wm.show_border()?;
+        if value.border == Some(true) {
+            border_manager::BORDER_ENABLED.store(true, Ordering::SeqCst);
         }
 
         Ok(())
@@ -885,6 +824,10 @@ impl StaticConfig {
                 if let Some(m) = wm.monitors_mut().get_mut(i) {
                     m.ensure_workspace_count(monitor.workspaces.len());
                     m.set_work_area_offset(monitor.work_area_offset);
+                    m.set_window_based_work_area_offset(monitor.window_based_work_area_offset);
+                    m.set_window_based_work_area_offset_limit(
+                        monitor.window_based_work_area_offset_limit.unwrap_or(1),
+                    );
 
                     for (j, ws) in m.workspaces_mut().iter_mut().enumerate() {
                         ws.load_static_config(
@@ -912,20 +855,8 @@ impl StaticConfig {
             }
         }
 
-        if value.active_window_border == Some(true) {
-            if BORDER_HWND.load(Ordering::SeqCst) == 0 {
-                Border::create("komorebi-border-window")?;
-            }
-
-            BORDER_ENABLED.store(true, Ordering::SeqCst);
-            wm.show_border()?;
-        } else {
-            BORDER_ENABLED.store(false, Ordering::SeqCst);
-            wm.hide_border()?;
-        }
-
-        if let Some(val) = value.invisible_borders {
-            wm.invisible_borders = val;
+        if let Some(enabled) = value.border {
+            border_manager::BORDER_ENABLED.store(enabled, Ordering::SeqCst);
         }
 
         if let Some(val) = value.window_container_behaviour {
@@ -949,8 +880,87 @@ impl StaticConfig {
         }
 
         wm.work_area_offset = value.global_work_area_offset;
+
+        match value.focus_follows_mouse {
+            None => WindowsApi::disable_focus_follows_mouse()?,
+            Some(FocusFollowsMouseImplementation::Windows) => {
+                WindowsApi::enable_focus_follows_mouse()?;
+            }
+            Some(FocusFollowsMouseImplementation::Komorebi) => {}
+        };
+
         wm.focus_follows_mouse = value.focus_follows_mouse;
+
+        let monitor_count = wm.monitors().len();
+
+        for i in 0..monitor_count {
+            wm.update_focused_workspace_by_monitor_idx(i)?;
+        }
 
         Ok(())
     }
+}
+
+fn populate_option(
+    entry: &mut ApplicationConfiguration,
+    identifiers: &mut Vec<MatchingRule>,
+    regex_identifiers: &mut HashMap<String, Regex>,
+) -> Result<()> {
+    if entry.identifier.matching_strategy.is_none() {
+        entry.identifier.matching_strategy = Option::from(MatchingStrategy::Legacy);
+    }
+
+    let rule = MatchingRule::Simple(entry.identifier.clone());
+
+    if !identifiers.contains(&rule) {
+        identifiers.push(rule);
+
+        if matches!(
+            entry.identifier.matching_strategy,
+            Some(MatchingStrategy::Regex)
+        ) {
+            let re = Regex::new(&entry.identifier.id)?;
+            regex_identifiers.insert(entry.identifier.id.clone(), re);
+        }
+    }
+
+    Ok(())
+}
+
+fn populate_rules(
+    matching_rules: &mut Vec<MatchingRule>,
+    identifiers: &mut Vec<MatchingRule>,
+    regex_identifiers: &mut HashMap<String, Regex>,
+) -> Result<()> {
+    for matching_rule in matching_rules {
+        if !identifiers.contains(matching_rule) {
+            match matching_rule {
+                MatchingRule::Simple(simple) => {
+                    if simple.matching_strategy.is_none() {
+                        simple.matching_strategy = Option::from(MatchingStrategy::Legacy);
+                    }
+
+                    if matches!(simple.matching_strategy, Some(MatchingStrategy::Regex)) {
+                        let re = Regex::new(&simple.id)?;
+                        regex_identifiers.insert(simple.id.clone(), re);
+                    }
+                }
+                MatchingRule::Composite(composite) => {
+                    for rule in composite {
+                        if rule.matching_strategy.is_none() {
+                            rule.matching_strategy = Option::from(MatchingStrategy::Legacy);
+                        }
+
+                        if matches!(rule.matching_strategy, Some(MatchingStrategy::Regex)) {
+                            let re = Regex::new(&rule.id)?;
+                            regex_identifiers.insert(rule.id.clone(), re);
+                        }
+                    }
+                }
+            }
+            identifiers.push(matching_rule.clone());
+        }
+    }
+
+    Ok(())
 }

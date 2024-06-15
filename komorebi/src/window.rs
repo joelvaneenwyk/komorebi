@@ -4,22 +4,21 @@ use std::convert::TryFrom;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::fmt::Write as _;
-use std::sync::atomic::Ordering;
+use std::time::Duration;
 
-use color_eyre::eyre::anyhow;
+use color_eyre::eyre;
 use color_eyre::Result;
+use crossbeam_utils::atomic::AtomicConsume;
 use komorebi_core::config_generation::IdWithIdentifier;
+use komorebi_core::config_generation::MatchingRule;
 use komorebi_core::config_generation::MatchingStrategy;
 use regex::Regex;
 use schemars::JsonSchema;
-use serde::ser::Error;
 use serde::ser::SerializeStruct;
+use serde::Deserialize;
 use serde::Serialize;
 use serde::Serializer;
 use windows::Win32::Foundation::HWND;
-use winput::press;
-use winput::release;
-use winput::Vk;
 
 use komorebi_core::ApplicationIdentifier;
 use komorebi_core::HidingBehaviour;
@@ -27,10 +26,9 @@ use komorebi_core::Rect;
 
 use crate::styles::ExtendedWindowStyle;
 use crate::styles::WindowStyle;
+use crate::transparency_manager;
 use crate::window_manager_event::WindowManagerEvent;
 use crate::windows_api::WindowsApi;
-use crate::ALT_FOCUS_HACK;
-use crate::BORDER_OVERFLOW_IDENTIFIERS;
 use crate::FLOAT_IDENTIFIERS;
 use crate::HIDDEN_HWNDS;
 use crate::HIDING_BEHAVIOUR;
@@ -41,9 +39,41 @@ use crate::PERMAIGNORE_CLASSES;
 use crate::REGEX_IDENTIFIERS;
 use crate::WSL2_UI_PROCESSES;
 
-#[derive(Debug, Clone, Copy, JsonSchema)]
+#[derive(Debug, Default, Clone, Copy, Deserialize, JsonSchema, PartialEq)]
 pub struct Window {
-    pub(crate) hwnd: isize,
+    pub hwnd: isize,
+}
+
+impl From<isize> for Window {
+    fn from(value: isize) -> Self {
+        Self { hwnd: value }
+    }
+}
+
+impl From<HWND> for Window {
+    fn from(value: HWND) -> Self {
+        Self { hwnd: value.0 }
+    }
+}
+
+#[allow(clippy::module_name_repetitions)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct WindowDetails {
+    pub title: String,
+    pub exe: String,
+    pub class: String,
+}
+
+impl TryFrom<Window> for WindowDetails {
+    type Error = eyre::ErrReport;
+
+    fn try_from(value: Window) -> std::result::Result<Self, Self::Error> {
+        Ok(Self {
+            title: value.title()?,
+            exe: value.exe()?,
+            class: value.class()?,
+        })
+    }
 }
 
 impl Display for Window {
@@ -79,24 +109,23 @@ impl Serialize for Window {
             "title",
             &self
                 .title()
-                .map_err(|_| S::Error::custom("could not get window title"))?,
+                .unwrap_or_else(|_| String::from("could not get window title")),
         )?;
         state.serialize_field(
             "exe",
             &self
                 .exe()
-                .map_err(|_| S::Error::custom("could not get window exe"))?,
+                .unwrap_or_else(|_| String::from("could not get window exe")),
         )?;
         state.serialize_field(
             "class",
             &self
                 .class()
-                .map_err(|_| S::Error::custom("could not get window class"))?,
+                .unwrap_or_else(|_| String::from("could not get window class")),
         )?;
         state.serialize_field(
             "rect",
-            &WindowsApi::window_rect(self.hwnd())
-                .map_err(|_| S::Error::custom("could not get window rect"))?,
+            &WindowsApi::window_rect(self.hwnd()).unwrap_or_default(),
         )?;
         state.end()
     }
@@ -107,7 +136,7 @@ impl Window {
         HWND(self.hwnd)
     }
 
-    pub fn center(&mut self, work_area: &Rect, invisible_borders: &Rect) -> Result<()> {
+    pub fn center(&self, work_area: &Rect) -> Result<()> {
         let half_width = work_area.right / 2;
         let half_weight = work_area.bottom / 2;
 
@@ -118,43 +147,29 @@ impl Window {
                 right: half_width,
                 bottom: half_weight,
             },
-            invisible_borders,
             true,
         )
     }
 
-    pub fn set_position(
-        &mut self,
-        layout: &Rect,
-        invisible_borders: &Rect,
-        top: bool,
-    ) -> Result<()> {
-        let mut rect = *layout;
-
-        let border_overflows = BORDER_OVERFLOW_IDENTIFIERS.lock();
-        let regex_identifiers = REGEX_IDENTIFIERS.lock();
-
-        let title = &self.title()?;
-        let class = &self.class()?;
-        let exe_name = &self.exe()?;
-
-        let should_remove_border = should_act(
-            title,
-            exe_name,
-            class,
-            &border_overflows,
-            &regex_identifiers,
-        );
-
-        if should_remove_border {
-            // Remove the invisible borders
-            rect.left -= invisible_borders.left;
-            rect.top -= invisible_borders.top;
-            rect.right += invisible_borders.right;
-            rect.bottom += invisible_borders.bottom;
+    pub fn set_position(&self, layout: &Rect, top: bool) -> Result<()> {
+        if WindowsApi::window_rect(self.hwnd())?.eq(layout) {
+            return Ok(());
         }
 
+        let rect = *layout;
         WindowsApi::position_window(self.hwnd(), &rect, top)
+    }
+
+    pub fn is_maximized(self) -> bool {
+        WindowsApi::is_zoomed(self.hwnd())
+    }
+
+    pub fn is_miminized(self) -> bool {
+        WindowsApi::is_iconic(self.hwnd())
+    }
+
+    pub fn is_visible(self) -> bool {
+        WindowsApi::is_window_visible(self.hwnd())
     }
 
     pub fn hide(self) {
@@ -221,137 +236,25 @@ impl Window {
         WindowsApi::unmaximize_window(self.hwnd());
     }
 
-    pub fn raise(self) {
-        // Attach komorebi thread to Window thread
-        let (_, window_thread_id) = WindowsApi::window_thread_process_id(self.hwnd());
-        let current_thread_id = WindowsApi::current_thread_id();
-
-        // This can be allowed to fail if a window doesn't have a message queue or if a journal record
-        // hook has been installed
-        // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-attachthreadinput#remarks
-        match WindowsApi::attach_thread_input(current_thread_id, window_thread_id, true) {
-            Ok(()) => {}
-            Err(error) => {
-                tracing::error!(
-                    "could not attach to window thread input processing mechanism, but continuing execution of raise(): {}",
-                    error
-                );
-            }
-        };
-
-        // Raise Window to foreground
-        match WindowsApi::set_foreground_window(self.hwnd()) {
-            Ok(_) => {}
-            Err(error) => {
-                tracing::error!(
-                    "could not set as foreground window, but continuing execution of raise(): {}",
-                    error
-                );
-            }
-        };
-
-        // This isn't really needed when the above command works as expected via AHK
-        match WindowsApi::set_focus(self.hwnd()) {
-            Ok(_) => {}
-            Err(error) => {
-                tracing::error!(
-                    "could not set focus, but continuing execution of raise(): {}",
-                    error
-                );
-            }
-        };
-
-        match WindowsApi::attach_thread_input(current_thread_id, window_thread_id, false) {
-            Ok(()) => {}
-            Err(error) => {
-                tracing::error!(
-                    "could not detach from window thread input processing mechanism, but continuing execution of raise(): {}",
-                    error
-                );
-            }
-        };
-    }
-
     pub fn focus(self, mouse_follows_focus: bool) -> Result<()> {
-        // Attach komorebi thread to Window thread
-        let (_, window_thread_id) = WindowsApi::window_thread_process_id(self.hwnd());
-        let current_thread_id = WindowsApi::current_thread_id();
-
-        // This can be allowed to fail if a window doesn't have a message queue or if a journal record
-        // hook has been installed
-        // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-attachthreadinput#remarks
-        match WindowsApi::attach_thread_input(current_thread_id, window_thread_id, true) {
-            Ok(()) => {}
-            Err(error) => {
-                tracing::error!(
-                    "could not attach to window thread input processing mechanism, but continuing execution of focus(): {}",
-                    error
-                );
-            }
-        };
-
-        // Raise Window to foreground
-        let mut foregrounded = false;
-        let mut tried_resetting_foreground_access = false;
-        let mut max_attempts = 10;
-
-        let hotkey_uses_alt = WindowsApi::alt_is_pressed();
-        while !foregrounded && max_attempts > 0 {
-            if ALT_FOCUS_HACK.load(Ordering::SeqCst) {
-                press(Vk::Alt);
-            }
-
-            match WindowsApi::set_foreground_window(self.hwnd()) {
-                Ok(_) => {
-                    foregrounded = true;
+        // If the target window is already focused, do nothing.
+        if let Ok(ihwnd) = WindowsApi::foreground_window() {
+            if HWND(ihwnd) == self.hwnd() {
+                // Center cursor in Window
+                if mouse_follows_focus {
+                    WindowsApi::center_cursor_in_rect(&WindowsApi::window_rect(self.hwnd())?)?;
                 }
-                Err(error) => {
-                    max_attempts -= 1;
-                    tracing::error!(
-                        "could not set as foreground window, but continuing execution of focus(): {}",
-                        error
-                    );
 
-                    // If this still doesn't work then maybe try https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-locksetforegroundwindow
-                    if !tried_resetting_foreground_access {
-                        let process_id = WindowsApi::current_process_id();
-                        if WindowsApi::allow_set_foreground_window(process_id).is_ok() {
-                            tried_resetting_foreground_access = true;
-                        }
-                    }
-                }
-            };
-
-            if ALT_FOCUS_HACK.load(Ordering::SeqCst) && !hotkey_uses_alt {
-                release(Vk::Alt);
+                return Ok(());
             }
         }
+
+        WindowsApi::raise_and_focus_window(self.hwnd())?;
 
         // Center cursor in Window
         if mouse_follows_focus {
             WindowsApi::center_cursor_in_rect(&WindowsApi::window_rect(self.hwnd())?)?;
         }
-
-        // This isn't really needed when the above command works as expected via AHK
-        match WindowsApi::set_focus(self.hwnd()) {
-            Ok(_) => {}
-            Err(error) => {
-                tracing::error!(
-                    "could not set focus, but continuing execution of focus(): {}",
-                    error
-                );
-            }
-        };
-
-        match WindowsApi::attach_thread_input(current_thread_id, window_thread_id, false) {
-            Ok(()) => {}
-            Err(error) => {
-                tracing::error!(
-                    "could not detach from window thread input processing mechanism, but continuing execution of focus(): {}",
-                    error
-                );
-            }
-        };
 
         Ok(())
     }
@@ -360,7 +263,10 @@ impl Window {
         let mut ex_style = self.ex_style()?;
         ex_style.insert(ExtendedWindowStyle::LAYERED);
         self.update_ex_style(&ex_style)?;
-        WindowsApi::set_transparent(self.hwnd())
+        WindowsApi::set_transparent(
+            self.hwnd(),
+            transparency_manager::TRANSPARENCY_ALPHA.load_consume(),
+        )
     }
 
     pub fn opaque(self) -> Result<()> {
@@ -380,16 +286,24 @@ impl Window {
 
     pub fn style(self) -> Result<WindowStyle> {
         let bits = u32::try_from(WindowsApi::gwl_style(self.hwnd())?)?;
-        WindowStyle::from_bits(bits).ok_or_else(|| anyhow!("there is no gwl style"))
+        Ok(WindowStyle::from_bits_truncate(bits))
     }
 
     pub fn ex_style(self) -> Result<ExtendedWindowStyle> {
         let bits = u32::try_from(WindowsApi::gwl_ex_style(self.hwnd())?)?;
-        ExtendedWindowStyle::from_bits(bits).ok_or_else(|| anyhow!("there is no gwl style"))
+        Ok(ExtendedWindowStyle::from_bits_truncate(bits))
     }
 
     pub fn title(self) -> Result<String> {
         WindowsApi::window_text_w(self.hwnd())
+    }
+
+    pub fn path(self) -> Result<String> {
+        let (process_id, _) = WindowsApi::window_thread_process_id(self.hwnd());
+        let handle = WindowsApi::process_handle(process_id)?;
+        let path = WindowsApi::exe_path(handle);
+        WindowsApi::close_process(handle)?;
+        path
     }
 
     pub fn exe(self) -> Result<String> {
@@ -426,18 +340,27 @@ impl Window {
         self.update_style(&style)
     }
 
-    #[tracing::instrument(fields(exe, title))]
-    pub fn should_manage(self, event: Option<WindowManagerEvent>) -> Result<bool> {
-        if let Some(WindowManagerEvent::DisplayChange(_)) = event {
-            return Ok(true);
+    #[tracing::instrument(fields(exe, title), skip(debug))]
+    pub fn should_manage(
+        self,
+        event: Option<WindowManagerEvent>,
+        debug: &mut RuleDebug,
+    ) -> Result<bool> {
+        if !self.is_window() {
+            return Ok(false);
         }
 
-        #[allow(clippy::question_mark)]
+        debug.is_window = true;
+
         if self.title().is_err() {
             return Ok(false);
         }
 
-        let is_cloaked = self.is_cloaked()?;
+        debug.has_title = true;
+
+        let is_cloaked = self.is_cloaked().unwrap_or_default();
+
+        debug.is_cloaked = is_cloaked;
 
         let mut allow_cloaked = false;
 
@@ -450,13 +373,28 @@ impl Window {
             }
         }
 
+        debug.allow_cloaked = allow_cloaked;
+
         match (allow_cloaked, is_cloaked) {
             // If allowing cloaked windows, we don't need to check the cloaked status
             (true, _) |
             // If not allowing cloaked windows, we need to ensure the window is not cloaked
             (false, false) => {
-                if let (Ok(title), Ok(exe_name), Ok(class)) = (self.title(), self.exe(), self.class()) {
-                    return Ok(window_is_eligible(&title, &exe_name, &class, &self.style()?, &self.ex_style()?, event));
+                if let (Ok(title), Ok(exe_name), Ok(class), Ok(path)) = (self.title(), self.exe(), self.class(), self.path()) {
+                    debug.title = Some(title.clone());
+                    debug.exe_name = Some(exe_name.clone());
+                    debug.class = Some(class.clone());
+                    debug.path = Some(path.clone());
+                    // calls for styles can fail quite often for events with windows that aren't really "windows"
+                    // since we have moved up calls of should_manage to the beginning of the process_event handler,
+                    // we should handle failures here gracefully to be able to continue the execution of process_event
+                    if let (Ok(style), Ok(ex_style)) = (&self.style(), &self.ex_style()) {
+                        debug.window_style = Some(*style);
+                        debug.extended_window_style = Some(*ex_style);
+                        let eligible = window_is_eligible(self.hwnd, &title, &exe_name, &class, &path, style, ex_style, event, debug);
+                        debug.should_manage = eligible;
+                        return Ok(eligible);
+                    }
                 }
             }
             _ => {}
@@ -466,17 +404,44 @@ impl Window {
     }
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct RuleDebug {
+    pub should_manage: bool,
+    pub is_window: bool,
+    pub has_title: bool,
+    pub is_cloaked: bool,
+    pub allow_cloaked: bool,
+    pub allow_layered_transparency: bool,
+    pub window_style: Option<WindowStyle>,
+    pub extended_window_style: Option<ExtendedWindowStyle>,
+    pub title: Option<String>,
+    pub exe_name: Option<String>,
+    pub class: Option<String>,
+    pub path: Option<String>,
+    pub matches_permaignore_class: Option<String>,
+    pub matches_float_identifier: Option<MatchingRule>,
+    pub matches_managed_override: Option<MatchingRule>,
+    pub matches_layered_whitelist: Option<MatchingRule>,
+    pub matches_wsl2_gui: Option<String>,
+    pub matches_no_titlebar: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn window_is_eligible(
+    hwnd: isize,
     title: &String,
     exe_name: &String,
     class: &String,
+    path: &str,
     style: &WindowStyle,
     ex_style: &ExtendedWindowStyle,
     event: Option<WindowManagerEvent>,
+    debug: &mut RuleDebug,
 ) -> bool {
     {
         let permaignore_classes = PERMAIGNORE_CLASSES.lock();
         if permaignore_classes.contains(class) {
+            debug.matches_permaignore_class = Some(class.clone());
             return false;
         }
     }
@@ -484,48 +449,81 @@ fn window_is_eligible(
     let regex_identifiers = REGEX_IDENTIFIERS.lock();
 
     let float_identifiers = FLOAT_IDENTIFIERS.lock();
-    let should_float = should_act(
+    let should_float = if let Some(rule) = should_act(
         title,
         exe_name,
         class,
+        path,
         &float_identifiers,
         &regex_identifiers,
-    );
+    ) {
+        debug.matches_float_identifier = Some(rule);
+        true
+    } else {
+        false
+    };
 
     let manage_identifiers = MANAGE_IDENTIFIERS.lock();
-    let managed_override = should_act(
+    let managed_override = if let Some(rule) = should_act(
         title,
         exe_name,
         class,
+        path,
         &manage_identifiers,
         &regex_identifiers,
-    );
+    ) {
+        debug.matches_managed_override = Some(rule);
+        true
+    } else {
+        false
+    };
 
     if should_float && !managed_override {
         return false;
     }
 
     let layered_whitelist = LAYERED_WHITELIST.lock();
-    let allow_layered = should_act(
+    let mut allow_layered = if let Some(rule) = should_act(
         title,
         exe_name,
         class,
+        path,
         &layered_whitelist,
         &regex_identifiers,
-    );
+    ) {
+        debug.matches_layered_whitelist = Some(rule);
+        true
+    } else {
+        false
+    };
 
-    // TODO: might need this for transparency
-    // let allow_layered = true;
+    let known_layered_hwnds = transparency_manager::known_hwnds();
+
+    allow_layered = if known_layered_hwnds.contains(&hwnd) {
+        debug.allow_layered_transparency = true;
+        true
+    } else {
+        allow_layered
+    };
 
     let allow_wsl2_gui = {
         let wsl2_ui_processes = WSL2_UI_PROCESSES.lock();
-        wsl2_ui_processes.contains(exe_name)
+        let allow = wsl2_ui_processes.contains(exe_name);
+        if allow {
+            debug.matches_wsl2_gui = Some(exe_name.clone())
+        }
+
+        allow
     };
 
     let allow_titlebar_removed = {
         let titlebars_removed = NO_TITLEBAR.lock();
         titlebars_removed.contains(exe_name)
     };
+
+    if exe_name.contains("firefox") {
+        std::thread::sleep(Duration::from_millis(10));
+    }
 
     if (allow_wsl2_gui || allow_titlebar_removed || style.contains(WindowStyle::CAPTION) && ex_style.contains(ExtendedWindowStyle::WINDOWEDGE))
                         && !ex_style.contains(ExtendedWindowStyle::DLGMODALFRAME)
@@ -537,8 +535,13 @@ fn window_is_eligible(
         || managed_override
     {
         return true;
-    } else if event.is_some() {
-        tracing::debug!("ignoring (exe: {}, title: {})", exe_name, title);
+    } else if let Some(event) = event {
+        tracing::debug!(
+            "ignoring (exe: {}, title: {}, event: {})",
+            exe_name,
+            title,
+            event
+        );
     }
 
     false
@@ -549,124 +552,290 @@ pub fn should_act(
     title: &str,
     exe_name: &str,
     class: &str,
-    identifiers: &[IdWithIdentifier],
+    path: &str,
+    identifiers: &[MatchingRule],
+    regex_identifiers: &HashMap<String, Regex>,
+) -> Option<MatchingRule> {
+    let mut matching_rule = None;
+    for rule in identifiers {
+        match rule {
+            MatchingRule::Simple(identifier) => {
+                if should_act_individual(
+                    title,
+                    exe_name,
+                    class,
+                    path,
+                    identifier,
+                    regex_identifiers,
+                ) {
+                    matching_rule = Some(rule.clone());
+                };
+            }
+            MatchingRule::Composite(identifiers) => {
+                let mut composite_results = vec![];
+                for identifier in identifiers {
+                    composite_results.push(should_act_individual(
+                        title,
+                        exe_name,
+                        class,
+                        path,
+                        identifier,
+                        regex_identifiers,
+                    ));
+                }
+
+                if composite_results.iter().all(|&x| x) {
+                    matching_rule = Some(rule.clone());
+                }
+            }
+        }
+    }
+
+    matching_rule
+}
+
+pub fn should_act_individual(
+    title: &str,
+    exe_name: &str,
+    class: &str,
+    path: &str,
+    identifier: &IdWithIdentifier,
     regex_identifiers: &HashMap<String, Regex>,
 ) -> bool {
     let mut should_act = false;
-    for identifier in identifiers {
-        match identifier.matching_strategy {
-            None => {
-                panic!("there is no matching strategy identified for this rule");
-            }
-            Some(MatchingStrategy::Legacy) => match identifier.kind {
-                ApplicationIdentifier::Title => {
-                    if title.starts_with(&identifier.id) || title.ends_with(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-                ApplicationIdentifier::Class => {
-                    if class.starts_with(&identifier.id) || class.ends_with(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-                ApplicationIdentifier::Exe => {
-                    if exe_name.eq(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-            },
-            Some(MatchingStrategy::Equals) => match identifier.kind {
-                ApplicationIdentifier::Title => {
-                    if title.eq(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-                ApplicationIdentifier::Class => {
-                    if class.eq(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-                ApplicationIdentifier::Exe => {
-                    if exe_name.eq(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-            },
-            Some(MatchingStrategy::StartsWith) => match identifier.kind {
-                ApplicationIdentifier::Title => {
-                    if title.starts_with(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-                ApplicationIdentifier::Class => {
-                    if class.starts_with(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-                ApplicationIdentifier::Exe => {
-                    if exe_name.starts_with(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-            },
-            Some(MatchingStrategy::EndsWith) => match identifier.kind {
-                ApplicationIdentifier::Title => {
-                    if title.ends_with(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-                ApplicationIdentifier::Class => {
-                    if class.ends_with(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-                ApplicationIdentifier::Exe => {
-                    if exe_name.ends_with(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-            },
-            Some(MatchingStrategy::Contains) => match identifier.kind {
-                ApplicationIdentifier::Title => {
-                    if title.contains(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-                ApplicationIdentifier::Class => {
-                    if class.contains(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-                ApplicationIdentifier::Exe => {
-                    if exe_name.contains(&identifier.id) {
-                        should_act = true;
-                    }
-                }
-            },
-            Some(MatchingStrategy::Regex) => match identifier.kind {
-                ApplicationIdentifier::Title => {
-                    if let Some(re) = regex_identifiers.get(&identifier.id) {
-                        if re.is_match(title) {
-                            should_act = true;
-                        }
-                    }
-                }
-                ApplicationIdentifier::Class => {
-                    if let Some(re) = regex_identifiers.get(&identifier.id) {
-                        if re.is_match(class) {
-                            should_act = true;
-                        }
-                    }
-                }
-                ApplicationIdentifier::Exe => {
-                    if let Some(re) = regex_identifiers.get(&identifier.id) {
-                        if re.is_match(exe_name) {
-                            should_act = true;
-                        }
-                    }
-                }
-            },
+
+    match identifier.matching_strategy {
+        None => {
+            panic!("there is no matching strategy identified for this rule");
         }
+        Some(MatchingStrategy::Legacy) => match identifier.kind {
+            ApplicationIdentifier::Title => {
+                if title.starts_with(&identifier.id) || title.ends_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Class => {
+                if class.starts_with(&identifier.id) || class.ends_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Exe => {
+                if exe_name.eq(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Path => {
+                if path.eq(&identifier.id) {
+                    should_act = true;
+                }
+            }
+        },
+        Some(MatchingStrategy::Equals) => match identifier.kind {
+            ApplicationIdentifier::Title => {
+                if title.eq(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Class => {
+                if class.eq(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Exe => {
+                if exe_name.eq(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Path => {
+                if path.eq(&identifier.id) {
+                    should_act = true;
+                }
+            }
+        },
+        Some(MatchingStrategy::DoesNotEqual) => match identifier.kind {
+            ApplicationIdentifier::Title => {
+                if !title.eq(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Class => {
+                if !class.eq(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Exe => {
+                if !exe_name.eq(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Path => {
+                if !path.eq(&identifier.id) {
+                    should_act = true;
+                }
+            }
+        },
+        Some(MatchingStrategy::StartsWith) => match identifier.kind {
+            ApplicationIdentifier::Title => {
+                if title.starts_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Class => {
+                if class.starts_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Exe => {
+                if exe_name.starts_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Path => {
+                if path.starts_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+        },
+        Some(MatchingStrategy::DoesNotStartWith) => match identifier.kind {
+            ApplicationIdentifier::Title => {
+                if !title.starts_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Class => {
+                if !class.starts_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Exe => {
+                if !exe_name.starts_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Path => {
+                if !path.starts_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+        },
+        Some(MatchingStrategy::EndsWith) => match identifier.kind {
+            ApplicationIdentifier::Title => {
+                if title.ends_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Class => {
+                if class.ends_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Exe => {
+                if exe_name.ends_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Path => {
+                if path.ends_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+        },
+        Some(MatchingStrategy::DoesNotEndWith) => match identifier.kind {
+            ApplicationIdentifier::Title => {
+                if !title.ends_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Class => {
+                if !class.ends_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Exe => {
+                if !exe_name.ends_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Path => {
+                if !path.ends_with(&identifier.id) {
+                    should_act = true;
+                }
+            }
+        },
+        Some(MatchingStrategy::Contains) => match identifier.kind {
+            ApplicationIdentifier::Title => {
+                if title.contains(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Class => {
+                if class.contains(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Exe => {
+                if exe_name.contains(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Path => {
+                if path.contains(&identifier.id) {
+                    should_act = true;
+                }
+            }
+        },
+        Some(MatchingStrategy::DoesNotContain) => match identifier.kind {
+            ApplicationIdentifier::Title => {
+                if !title.contains(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Class => {
+                if !class.contains(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Exe => {
+                if !exe_name.contains(&identifier.id) {
+                    should_act = true;
+                }
+            }
+            ApplicationIdentifier::Path => {
+                if !path.contains(&identifier.id) {
+                    should_act = true;
+                }
+            }
+        },
+        Some(MatchingStrategy::Regex) => match identifier.kind {
+            ApplicationIdentifier::Title => {
+                if let Some(re) = regex_identifiers.get(&identifier.id) {
+                    if re.is_match(title) {
+                        should_act = true;
+                    }
+                }
+            }
+            ApplicationIdentifier::Class => {
+                if let Some(re) = regex_identifiers.get(&identifier.id) {
+                    if re.is_match(class) {
+                        should_act = true;
+                    }
+                }
+            }
+            ApplicationIdentifier::Exe => {
+                if let Some(re) = regex_identifiers.get(&identifier.id) {
+                    if re.is_match(exe_name) {
+                        should_act = true;
+                    }
+                }
+            }
+            ApplicationIdentifier::Path => {
+                if let Some(re) = regex_identifiers.get(&identifier.id) {
+                    if re.is_match(path) {
+                        should_act = true;
+                    }
+                }
+            }
+        },
     }
 
     should_act

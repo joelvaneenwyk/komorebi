@@ -3,9 +3,10 @@ use std::fs::File;
 use std::io::BufReader;
 use std::ops::Deref;
 use std::ops::DerefMut;
-use std::path::PathBuf;
+use std::path::Path;
 
 use color_eyre::eyre::anyhow;
+use color_eyre::eyre::bail;
 use color_eyre::Result;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -13,7 +14,7 @@ use serde::Serialize;
 
 use crate::Rect;
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct CustomLayout(Vec<Column>);
 
 impl Deref for CustomLayout {
@@ -31,23 +32,20 @@ impl DerefMut for CustomLayout {
 }
 
 impl CustomLayout {
-    pub fn from_path_buf(path: PathBuf) -> Result<Self> {
-        let invalid_filetype = anyhow!("custom layouts must be json or yaml files");
+    pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
         let layout: Self = match path.extension() {
-            Some(extension) => {
-                if extension == "yaml" || extension == "yml" {
-                    serde_yaml::from_reader(BufReader::new(File::open(path)?))?
-                } else if extension == "json" {
-                    serde_json::from_reader(BufReader::new(File::open(path)?))?
-                } else {
-                    return Err(invalid_filetype);
-                }
+            Some(extension) if extension == "yaml" || extension == "yml" => {
+                serde_json::from_reader(BufReader::new(File::open(path)?))?
             }
-            None => return Err(invalid_filetype),
+            Some(extension) if extension == "json" => {
+                serde_json::from_reader(BufReader::new(File::open(path)?))?
+            }
+            _ => return Err(anyhow!("custom layouts must be json or yaml files")),
         };
 
         if !layout.is_valid() {
-            return Err(anyhow!("the layout file provided was invalid"));
+            bail!("the layout file provided was invalid");
         }
 
         Ok(layout)
@@ -252,7 +250,7 @@ impl CustomLayout {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "column", content = "configuration")]
 pub enum Column {
     Primary(Option<ColumnWidth>),
@@ -260,18 +258,18 @@ pub enum Column {
     Tertiary(ColumnSplit),
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum ColumnWidth {
     WidthPercentage(f32),
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum ColumnSplit {
     Horizontal,
     Vertical,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum ColumnSplitWithCapacity {
     Horizontal(usize),
     Vertical(usize),

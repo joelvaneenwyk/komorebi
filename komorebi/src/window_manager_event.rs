@@ -2,6 +2,7 @@ use std::fmt::Display;
 use std::fmt::Formatter;
 
 use schemars::JsonSchema;
+use serde::Deserialize;
 use serde::Serialize;
 
 use crate::window::should_act;
@@ -10,7 +11,7 @@ use crate::winevent::WinEvent;
 use crate::OBJECT_NAME_CHANGE_ON_LAUNCH;
 use crate::REGEX_IDENTIFIERS;
 
-#[derive(Debug, Copy, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "content")]
 pub enum WindowManagerEvent {
     Destroy(WinEvent, Window),
@@ -26,7 +27,7 @@ pub enum WindowManagerEvent {
     Manage(Window),
     Unmanage(Window),
     Raise(Window),
-    DisplayChange(Window),
+    TitleUpdate(WinEvent, Window),
 }
 
 impl Display for WindowManagerEvent {
@@ -74,8 +75,8 @@ impl Display for WindowManagerEvent {
             Self::Raise(window) => {
                 write!(f, "Raise (Window: {window})")
             }
-            Self::DisplayChange(window) => {
-                write!(f, "DisplayChange (Window: {window})")
+            Self::TitleUpdate(winevent, window) => {
+                write!(f, "TitleUpdate (WinEvent: {winevent}, Window: {window})")
             }
         }
     }
@@ -96,8 +97,8 @@ impl WindowManagerEvent {
             | Self::MouseCapture(_, window)
             | Self::Raise(window)
             | Self::Manage(window)
-            | Self::DisplayChange(window)
-            | Self::Unmanage(window) => window,
+            | Self::Unmanage(window)
+            | Self::TitleUpdate(_, window) => window,
         }
     }
 
@@ -138,19 +139,22 @@ impl WindowManagerEvent {
                 let title = &window.title().ok()?;
                 let exe_name = &window.exe().ok()?;
                 let class = &window.class().ok()?;
+                let path = &window.path().ok()?;
 
-                let should_trigger = should_act(
+                let should_trigger_show = should_act(
                     title,
                     exe_name,
                     class,
+                    path,
                     &object_name_change_on_launch,
                     &regex_identifiers,
-                );
+                )
+                .is_some();
 
-                if should_trigger {
+                if should_trigger_show {
                     Option::from(Self::Show(winevent, window))
                 } else {
-                    None
+                    Option::from(Self::TitleUpdate(winevent, window))
                 }
             }
             _ => None,

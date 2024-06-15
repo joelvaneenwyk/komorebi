@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 
 use color_eyre::eyre::anyhow;
+use color_eyre::eyre::bail;
 use color_eyre::Result;
 use getset::CopyGetters;
 use getset::Getters;
 use getset::MutGetters;
 use getset::Setters;
 use schemars::JsonSchema;
+use serde::Deserialize;
 use serde::Serialize;
 
 use komorebi_core::Rect;
@@ -16,37 +18,70 @@ use crate::container::Container;
 use crate::ring::Ring;
 use crate::workspace::Workspace;
 
-#[derive(Debug, Clone, Serialize, Getters, CopyGetters, MutGetters, Setters, JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    Getters,
+    CopyGetters,
+    MutGetters,
+    Setters,
+    JsonSchema,
+    PartialEq,
+)]
 pub struct Monitor {
     #[getset(get_copy = "pub", set = "pub")]
     id: isize,
     #[getset(get = "pub", set = "pub")]
     name: String,
     #[getset(get = "pub", set = "pub")]
+    device: String,
+    #[getset(get = "pub", set = "pub")]
+    device_id: String,
+    #[getset(get = "pub", set = "pub")]
     size: Rect,
     #[getset(get = "pub", set = "pub")]
     work_area_size: Rect,
     #[getset(get_copy = "pub", set = "pub")]
     work_area_offset: Option<Rect>,
+    #[getset(get_copy = "pub", set = "pub")]
+    window_based_work_area_offset: Option<Rect>,
+    #[getset(get_copy = "pub", set = "pub")]
+    window_based_work_area_offset_limit: isize,
     workspaces: Ring<Workspace>,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[getset(get_copy = "pub", set = "pub")]
+    last_focused_workspace: Option<usize>,
     #[getset(get_mut = "pub")]
     workspace_names: HashMap<usize, String>,
 }
 
 impl_ring_elements!(Monitor, Workspace);
 
-pub fn new(id: isize, size: Rect, work_area_size: Rect, name: String) -> Monitor {
+pub fn new(
+    id: isize,
+    size: Rect,
+    work_area_size: Rect,
+    name: String,
+    device: String,
+    device_id: String,
+) -> Monitor {
     let mut workspaces = Ring::default();
     workspaces.elements_mut().push_back(Workspace::default());
 
     Monitor {
         id,
         name,
+        device,
+        device_id,
         size,
         work_area_size,
         work_area_offset: None,
+        window_based_work_area_offset: None,
+        window_based_work_area_offset_limit: 1,
         workspaces,
+        last_focused_workspace: None,
         workspace_names: HashMap::default(),
     }
 }
@@ -58,7 +93,7 @@ impl Monitor {
             if i == focused_idx {
                 workspace.restore(mouse_follows_focus)?;
             } else {
-                workspace.hide();
+                workspace.hide(None);
             }
         }
 
@@ -92,7 +127,7 @@ impl Monitor {
         if idx == 0 {
             self.workspaces_mut().push_back(Workspace::default());
         } else {
-            self.focus_workspace(idx - 1).ok()?;
+            self.focus_workspace(idx.saturating_sub(1)).ok()?;
         };
 
         None
@@ -120,9 +155,7 @@ impl Monitor {
             .ok_or_else(|| anyhow!("there is no workspace"))?;
 
         if workspace.maximized_window().is_some() {
-            return Err(anyhow!(
-                "cannot move native maximized window to another monitor or workspace"
-            ));
+            bail!("cannot move native maximized window to another monitor or workspace");
         }
 
         let container = workspace
@@ -181,12 +214,13 @@ impl Monitor {
         self.workspaces().len()
     }
 
-    pub fn update_focused_workspace(
-        &mut self,
-        offset: Option<Rect>,
-        invisible_borders: &Rect,
-    ) -> Result<()> {
+    pub fn update_focused_workspace(&mut self, offset: Option<Rect>) -> Result<()> {
         let work_area = *self.work_area_size();
+        let window_based_work_area_offset = (
+            self.window_based_work_area_offset_limit(),
+            self.window_based_work_area_offset(),
+        );
+
         let offset = if self.work_area_offset().is_some() {
             self.work_area_offset()
         } else {
@@ -195,7 +229,7 @@ impl Monitor {
 
         self.focused_workspace_mut()
             .ok_or_else(|| anyhow!("there is no workspace"))?
-            .update(&work_area, offset, invisible_borders)?;
+            .update(&work_area, offset, window_based_work_area_offset)?;
 
         Ok(())
     }

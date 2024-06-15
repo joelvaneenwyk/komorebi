@@ -10,9 +10,18 @@ use crate::Rect;
 use crate::Sizing;
 
 #[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, Display, EnumString, ValueEnum, JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    Eq,
+    PartialEq,
+    Display,
+    EnumString,
+    ValueEnum,
+    JsonSchema,
 )]
-#[strum(serialize_all = "snake_case")]
 pub enum DefaultLayout {
     BSP,
     Columns,
@@ -20,6 +29,8 @@ pub enum DefaultLayout {
     VerticalStack,
     HorizontalStack,
     UltrawideVerticalStack,
+    Grid,
+    RightMainVerticalStack,
     // NOTE: If any new layout is added, please make sure to register the same in `DefaultLayout::cycle`
 }
 
@@ -34,7 +45,16 @@ impl DefaultLayout {
         sizing: Sizing,
         delta: i32,
     ) -> Option<Rect> {
-        if !matches!(self, Self::BSP) && !matches!(self, Self::UltrawideVerticalStack) {
+        if !matches!(
+            self,
+            Self::BSP
+                | Self::Columns
+                | Self::Rows
+                | Self::VerticalStack
+                | Self::RightMainVerticalStack
+                | Self::HorizontalStack
+                | Self::UltrawideVerticalStack
+        ) {
             return None;
         };
 
@@ -135,7 +155,9 @@ impl DefaultLayout {
             Self::Rows => Self::VerticalStack,
             Self::VerticalStack => Self::HorizontalStack,
             Self::HorizontalStack => Self::UltrawideVerticalStack,
-            Self::UltrawideVerticalStack => Self::BSP,
+            Self::UltrawideVerticalStack => Self::Grid,
+            Self::Grid => Self::RightMainVerticalStack,
+            Self::RightMainVerticalStack => Self::BSP,
         }
     }
 
@@ -147,7 +169,9 @@ impl DefaultLayout {
             Self::HorizontalStack => Self::VerticalStack,
             Self::VerticalStack => Self::Rows,
             Self::Rows => Self::Columns,
-            Self::Columns => Self::BSP,
+            Self::Columns => Self::Grid,
+            Self::Grid => Self::RightMainVerticalStack,
+            Self::RightMainVerticalStack => Self::BSP,
         }
     }
 }

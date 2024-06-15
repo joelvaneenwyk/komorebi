@@ -39,7 +39,7 @@ use crate::PERMAIGNORE_CLASSES;
 use crate::REGEX_IDENTIFIERS;
 use crate::WSL2_UI_PROCESSES;
 
-#[derive(Debug, Default, Clone, Copy, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Copy, Deserialize, JsonSchema, PartialEq)]
 pub struct Window {
     pub hwnd: isize,
 }
@@ -47,6 +47,12 @@ pub struct Window {
 impl From<isize> for Window {
     fn from(value: isize) -> Self {
         Self { hwnd: value }
+    }
+}
+
+impl From<HWND> for Window {
+    fn from(value: HWND) -> Self {
+        Self { hwnd: value.0 }
     }
 }
 

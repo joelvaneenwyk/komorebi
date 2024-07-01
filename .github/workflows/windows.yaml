@@ -4,15 +4,9 @@ name: Windows
 
 on:
   pull_request:
-    branches:
-      - "*"
+    branches: [main, develop]
   push:
-    branches:
-      - master
-      - main
-      - develop
-      - feature/*
-      - hotfix/*
+    branches: [main, develop]
     tags:
       - v*
   schedule:
@@ -24,25 +18,30 @@ jobs:
     runs-on: windows-latest
     env:
       RUSTFLAGS: -Ctarget-feature=+crt-static
+
     strategy:
       fail-fast: false
       matrix:
         target:
           - x86_64-pc-windows-msvc
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Prep cargo dirs
         run: |
           New-Item "${env:USERPROFILE}\.cargo\registry" -ItemType Directory -Force
           New-Item "${env:USERPROFILE}\.cargo\git" -ItemType Directory -Force
         shell: powershell
+
       - name: Set environment variables appropriately for the build
         run: |
           echo "%USERPROFILE%\.cargo\bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
           echo "TARGET=${{ matrix.target }}" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           echo "SKIP_TESTS=" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+
       - name: Cache cargo registry, git trees and binaries
         uses: actions/cache@v4
         with:
@@ -51,17 +50,20 @@ jobs:
             ~/.cargo/git
             ~/.cargo/bin
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Get rustc commit hash
         id: cargo-target-cache
         run: |
           echo "::set-output name=rust_hash::$(rustc -Vv | grep commit-hash | awk '{print $2}')"
         shell: bash
+
       - name: Cache cargo build
         uses: actions/cache@v4
         with:
           path: target
           key: ${{ github.base_ref }}-${{ github.head_ref }}-${{ matrix.target }}-cargo-target-dir-${{ steps.cargo-target-cache.outputs.rust_hash }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ github.base_ref }}-${{ matrix.target }}-cargo-target-dir-${{ steps.cargo-target-cache.outputs.rust_hash }}-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Install Rustup using win.rustup.rs
         run: |
           # Disable the download progress bar which can cause perf issues
@@ -69,9 +71,11 @@ jobs:
           Invoke-WebRequest https://win.rustup.rs/ -OutFile rustup-init.exe
           .\rustup-init.exe -y --default-host=x86_64-pc-windows-msvc --profile=minimal
         shell: powershell
+
       - name: Ensure stable toolchain is up to date
         run: rustup update stable
         shell: bash
+
       - name: Install the target
         run: |
           rustup target install ${{ matrix.target }}
@@ -83,10 +87,12 @@ jobs:
       - name: Run a full build
         run: |
           cargo build --locked --release --target ${{ matrix.target }}
+
       - name: Create MSI installer
         run: |
           cargo install cargo-wix
           cargo wix -p komorebi --nocapture -I .\wix\main.wxs --target x86_64-pc-windows-msvc
+
       - name: Upload the built artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -105,7 +111,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v3
         with:
           version: latest
-          args: build --skip=validate --clean
+          args: build --skip=validate --clean --snapshot
 
       # Release
       - name: Generate changelog

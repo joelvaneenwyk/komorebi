@@ -1,0 +1,20 @@
+version: "0.2"
+ignorePaths: []
+dictionaryDefinitions:
+  - name: komorebi
+    path: ./.cspell/komorebi.txt
+    addWords: true
+    scope: workspace
+dictionaries:
+  - komorebi
+  - en-GB
+  - en-US
+  - rust
+words: []
+ignoreWords: []
+import: []
+enableFiletypes:
+  - ahk
+  - ahk2
+  - sxhkdrc
+  - rust

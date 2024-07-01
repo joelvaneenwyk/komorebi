@@ -1,6 +1,15 @@
 set windows-shell := ["pwsh.exe", "-NoLogo", "-Command"]
 export RUST_BACKTRACE := "full"
 
+setup:
+    $ErrorActionPreference = 'Continue'; (scoop bucket add versions -or $True) | Out-Null
+    scoop install autohotkey
+    rustup set default-host x86_64-pc-windows-msvc
+    rustup self update
+    rustup update
+    rustup component add rust-src
+    rustup component add rust-analyzer
+
 clean:
     cargo clean
 

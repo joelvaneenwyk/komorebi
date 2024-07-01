@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "swellaby.vscode-rust-test-adapter",
+    "edwinkofler.vscode-assorted-languages",
+    "alefragnani.rtf",
+    "kokakiwi.vscode-just",
+    "thqby.vscode-autohotkey2-lsp",
+    "mark-wiemer.vscode-autohotkey-plus-plus"
+  ]
+}

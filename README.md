@@ -2,14 +2,15 @@
 
 Tiling Window Management for Windows.
 
+<!-- markdownlint-disable MD033 -->
 <p>
   <a href="https://techforpalestine.org/learn-more">
     <img alt="Tech for Palestine" src="https://badge.techforpalestine.org/default">
   </a>
-  <img alt="GitHub Workflow Status" src="https://img.shields.io/github/actions/workflow/status/LGUG2Z/komorebi/.github/workflows/windows.yaml">
-  <img alt="GitHub" src="https://img.shields.io/github/license/LGUG2Z/komorebi">
-  <img alt="GitHub all releases" src="https://img.shields.io/github/downloads/LGUG2Z/komorebi/total">
-  <img alt="GitHub commits since latest release (by date) for a branch" src="https://img.shields.io/github/commits-since/LGUG2Z/komorebi/latest">
+  <img alt="GitHub Workflow Status" src="https://img.shields.io/github/actions/workflow/status/joelvaneenwyk/komorebi/.github/workflows/windows.yaml">
+  <img alt="GitHub" src="https://img.shields.io/github/license/joelvaneenwyk/komorebi">
+  <img alt="GitHub all releases" src="https://img.shields.io/github/downloads/joelvaneenwyk/komorebi/total">
+  <img alt="GitHub commits since latest release (by date) for a branch" src="https://img.shields.io/github/commits-since/joelvaneenwyk/komorebi/latest">
   <a href="https://discord.gg/mGkn66PHkx">
     <img alt="Discord" src="https://img.shields.io/discord/898554690126630914">
   </a>
@@ -28,6 +29,12 @@ Tiling Window Management for Windows.
 </p>
 
 ![screenshot](https://user-images.githubusercontent.com/13164844/184027064-f5a6cec2-2865-4d65-a549-a1f1da589abf.png)
+
+## About
+
+_komorebi_ is a tiling window manager that works as an extension to
+Microsoft's [Desktop Window Manager](https://docs.microsoft.com/en-us/windows/win32/dwm/dwm-overview) in Windows 10 and
+above.
 
 _komorebi_ is a tiling window manager that works as an extension to Microsoft's
 [Desktop Window
@@ -111,7 +118,7 @@ https://github.com/LGUG2Z/komorebi/assets/13164844/21be8dc4-fa76-4f70-9b37-1d316
 video can be viewed
 [here](https://twitter.com/haxibami/status/1501560766578659332).
 
-https://user-images.githubusercontent.com/13164844/163496447-20c3ff0a-c5d8-40d1-9cc8-156c4cebf12e.mp4
+<https://user-images.githubusercontent.com/13164844/163496447-20c3ff0a-c5d8-40d1-9cc8-156c4cebf12e.mp4>
 
 [@aik2mlj](https://github.com/aik2mlj) showing _komorebi_ running on Windows 11
 with multiple workspaces, terminal emulators, a web browser, and the
@@ -119,7 +126,7 @@ with multiple workspaces, terminal emulators, a web browser, and the
 widget enabled. The original video can be viewed
 [here](https://zhuanlan.zhihu.com/p/455064481).
 
-https://user-images.githubusercontent.com/13164844/163496414-a9cde3d1-b8a7-4a7a-96fb-a8985380bc70.mp4
+<https://user-images.githubusercontent.com/13164844/163496414-a9cde3d1-b8a7-4a7a-96fb-a8985380bc70.mp4>
 
 # Contribution Guidelines
 
@@ -414,12 +421,12 @@ A TCP listener can optionally be exposed on a port of your choosing with the `--
 provided to `komorebi` or `komorebic start`, no TCP listener will be created.
 
 Once created, your client may send
-any [SocketMessage](https://github.com/LGUG2Z/komorebi/blob/master/komorebi-core/src/lib.rs#L37) to `komorebi` in the
+any [SocketMessage](https://github.com/joelvaneenwyk/komorebi/blob/main/komorebi-core/src/lib.rs#L37) to `komorebi` in the
 same way that `komorebic` would.
 
 This can be used if you would like to create your own alternative to `komorebic` which incorporates scripting and
 various middleware layers, and similarly it can be used if you would like to integrate `komorebi` with
-a [custom input handler](https://github.com/LGUG2Z/komorebi/issues/176#issue-1302643961).
+a [custom input handler](https://github.com/joelvaneenwyk/komorebi/issues/176#issue-1302643961).
 
 If a client sends an unrecognized message, it will be disconnected and have to reconnect before trying to communicate
 again.

@@ -303,6 +303,24 @@ impl WindowManager {
         StaticConfig::reload(pathbuf, self)
     }
 
+    pub fn window_container_behaviour(
+        &self,
+        monitor_idx: usize,
+        workspace_idx: usize,
+    ) -> WindowContainerBehaviour {
+        if let Some(monitor) = self.monitors().get(monitor_idx) {
+            if let Some(workspace) = monitor.workspaces().get(workspace_idx) {
+                return if workspace.containers().is_empty() {
+                    WindowContainerBehaviour::Create
+                } else {
+                    self.window_container_behaviour
+                };
+            }
+        }
+
+        WindowContainerBehaviour::Create
+    }
+
     #[tracing::instrument(skip(self))]
     pub fn watch_configuration(&mut self, enable: bool) -> Result<()> {
         let config_pwsh = HOME_DIR.join("komorebi.ps1");
@@ -614,10 +632,39 @@ impl WindowManager {
         let mut hwnd = None;
 
         let workspace = self.focused_workspace()?;
+        // first check the focused workspace
         if let Some(container_idx) = workspace.container_idx_from_current_point() {
             if let Some(container) = workspace.containers().get(container_idx) {
                 if let Some(window) = container.focused_window() {
                     hwnd = Some(window.hwnd);
+                }
+            }
+        }
+
+        // then check all workspaces
+        if hwnd.is_none() {
+            for monitor in self.monitors() {
+                for ws in monitor.workspaces() {
+                    if let Some(container_idx) = ws.container_idx_from_current_point() {
+                        if let Some(container) = ws.containers().get(container_idx) {
+                            if let Some(window) = container.focused_window() {
+                                hwnd = Some(window.hwnd);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // finally try matching the other way using a hwnd returned from the cursor pos
+        if hwnd.is_none() {
+            let cursor_pos_hwnd = WindowsApi::window_at_cursor_pos()?;
+
+            for monitor in self.monitors() {
+                for ws in monitor.workspaces() {
+                    if ws.container_for_window(cursor_pos_hwnd).is_some() {
+                        hwnd = Some(cursor_pos_hwnd);
+                    }
                 }
             }
         }
@@ -918,7 +965,32 @@ impl WindowManager {
                             window.opaque()?;
                         }
 
+                        window.remove_accent()?;
+
                         window.restore();
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub fn remove_all_accents(&mut self) -> Result<()> {
+        tracing::info!("removing all window accents");
+
+        for monitor in self.monitors() {
+            for workspace in monitor.workspaces() {
+                if let Some(monocle) = workspace.monocle_container() {
+                    for window in monocle.windows() {
+                        window.remove_accent()?
+                    }
+                }
+
+                for containers in workspace.containers() {
+                    for window in containers.windows() {
+                        window.remove_accent()?;
                     }
                 }
             }

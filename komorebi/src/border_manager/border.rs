@@ -1,12 +1,9 @@
+use crate::border_manager::window_kind_colour;
 use crate::border_manager::WindowKind;
 use crate::border_manager::BORDER_OFFSET;
 use crate::border_manager::BORDER_WIDTH;
-use crate::border_manager::FOCUSED;
 use crate::border_manager::FOCUS_STATE;
-use crate::border_manager::MONOCLE;
-use crate::border_manager::STACK;
 use crate::border_manager::STYLE;
-use crate::border_manager::UNFOCUSED;
 use crate::border_manager::Z_ORDER;
 use crate::WindowsApi;
 use crate::WINDOWS_11;
@@ -98,13 +95,19 @@ impl Border {
             let hwnd = WindowsApi::create_border_window(PCWSTR(name.as_ptr()), h_module)?;
             hwnd_sender.send(hwnd)?;
 
-            let mut message = MSG::default();
-            unsafe {
-                while GetMessageW(&mut message, HWND(hwnd), 0, 0).into() {
-                    TranslateMessage(&message);
-                    DispatchMessageW(&message);
-                    std::thread::sleep(Duration::from_millis(10));
+            let mut msg: MSG = MSG::default();
+
+            loop {
+                unsafe {
+                    if !GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
+                        tracing::debug!("border window event processing thread shutdown");
+                        break;
+                    };
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
                 }
+
+                std::thread::sleep(Duration::from_millis(10))
             }
 
             Ok(())
@@ -159,7 +162,7 @@ impl Border {
                     match WindowsApi::window_rect(window) {
                         Ok(rect) => {
                             // Grab the focus kind for this border
-                            let focus_kind = {
+                            let window_kind = {
                                 FOCUS_STATE
                                     .lock()
                                     .get(&window.0)
@@ -171,12 +174,7 @@ impl Border {
                             let hpen = CreatePen(
                                 PS_SOLID | PS_INSIDEFRAME,
                                 BORDER_WIDTH.load(Ordering::SeqCst),
-                                COLORREF(match focus_kind {
-                                    WindowKind::Unfocused => UNFOCUSED.load(Ordering::SeqCst),
-                                    WindowKind::Single => FOCUSED.load(Ordering::SeqCst),
-                                    WindowKind::Stack => STACK.load(Ordering::SeqCst),
-                                    WindowKind::Monocle => MONOCLE.load(Ordering::SeqCst),
-                                }),
+                                COLORREF(window_kind_colour(window_kind)),
                             );
 
                             let hbrush = WindowsApi::create_solid_brush(0);

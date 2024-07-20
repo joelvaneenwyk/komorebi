@@ -12,13 +12,13 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 
-use komorebi_core::Axis;
-use komorebi_core::CustomLayout;
-use komorebi_core::CycleDirection;
-use komorebi_core::DefaultLayout;
-use komorebi_core::Layout;
-use komorebi_core::OperationDirection;
-use komorebi_core::Rect;
+use crate::core::Axis;
+use crate::core::CustomLayout;
+use crate::core::CycleDirection;
+use crate::core::DefaultLayout;
+use crate::core::Layout;
+use crate::core::OperationDirection;
+use crate::core::Rect;
 
 use crate::border_manager::BORDER_OFFSET;
 use crate::border_manager::BORDER_WIDTH;
@@ -81,6 +81,8 @@ pub struct Workspace {
     resize_dimensions: Vec<Option<Rect>>,
     #[getset(get = "pub", set = "pub")]
     tile: bool,
+    #[getset(get_copy = "pub", set = "pub")]
+    apply_window_based_work_area_offset: bool,
 }
 
 impl_ring_elements!(Workspace, Container);
@@ -103,6 +105,7 @@ impl Default for Workspace {
             latest_layout: vec![],
             resize_dimensions: vec![],
             tile: true,
+            apply_window_based_work_area_offset: true,
         }
     }
 }
@@ -154,6 +157,10 @@ impl Workspace {
 
             self.tile = true;
         }
+
+        self.set_apply_window_based_work_area_offset(
+            config.apply_window_based_work_area_offset.unwrap_or(true),
+        );
 
         Ok(())
     }
@@ -260,7 +267,9 @@ impl Workspace {
             },
         );
 
-        if self.containers().len() <= window_based_work_area_offset_limit as usize {
+        if self.containers().len() <= window_based_work_area_offset_limit as usize
+            && self.apply_window_based_work_area_offset
+        {
             adjusted_work_area = window_based_work_area_offset.map_or_else(
                 || adjusted_work_area,
                 |offset| {

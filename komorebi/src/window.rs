@@ -1,17 +1,26 @@
+use crate::border_manager;
 use crate::com::SetCloak;
+use crate::focus_manager;
+use crate::stackbar_manager;
+use crate::ANIMATIONS_IN_PROGRESS;
+use crate::ANIMATION_DURATION;
+use crate::ANIMATION_ENABLED;
+use crate::ANIMATION_TEMPORARILY_DISABLED;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::fmt::Write as _;
+use std::sync::atomic::AtomicI32;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use crate::core::config_generation::IdWithIdentifier;
+use crate::core::config_generation::MatchingRule;
+use crate::core::config_generation::MatchingStrategy;
 use color_eyre::eyre;
 use color_eyre::Result;
 use crossbeam_utils::atomic::AtomicConsume;
-use komorebi_core::config_generation::IdWithIdentifier;
-use komorebi_core::config_generation::MatchingRule;
-use komorebi_core::config_generation::MatchingStrategy;
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::ser::SerializeStruct;
@@ -20,10 +29,11 @@ use serde::Serialize;
 use serde::Serializer;
 use windows::Win32::Foundation::HWND;
 
-use komorebi_core::ApplicationIdentifier;
-use komorebi_core::HidingBehaviour;
-use komorebi_core::Rect;
+use crate::core::ApplicationIdentifier;
+use crate::core::HidingBehaviour;
+use crate::core::Rect;
 
+use crate::animation::Animation;
 use crate::styles::ExtendedWindowStyle;
 use crate::styles::WindowStyle;
 use crate::transparency_manager;
@@ -39,20 +49,31 @@ use crate::PERMAIGNORE_CLASSES;
 use crate::REGEX_IDENTIFIERS;
 use crate::WSL2_UI_PROCESSES;
 
+pub static MINIMUM_WIDTH: AtomicI32 = AtomicI32::new(0);
+pub static MINIMUM_HEIGHT: AtomicI32 = AtomicI32::new(0);
+
 #[derive(Debug, Default, Clone, Copy, Deserialize, JsonSchema, PartialEq)]
 pub struct Window {
     pub hwnd: isize,
+    #[serde(skip)]
+    animation: Animation,
 }
 
 impl From<isize> for Window {
     fn from(value: isize) -> Self {
-        Self { hwnd: value }
+        Self {
+            hwnd: value,
+            animation: Animation::new(value),
+        }
     }
 }
 
 impl From<HWND> for Window {
     fn from(value: HWND) -> Self {
-        Self { hwnd: value.0 }
+        Self {
+            hwnd: value.0,
+            animation: Animation::new(value.0),
+        }
     }
 }
 
@@ -136,7 +157,7 @@ impl Window {
         HWND(self.hwnd)
     }
 
-    pub fn center(&self, work_area: &Rect) -> Result<()> {
+    pub fn center(&mut self, work_area: &Rect) -> Result<()> {
         let half_width = work_area.right / 2;
         let half_weight = work_area.bottom / 2;
 
@@ -151,13 +172,66 @@ impl Window {
         )
     }
 
+    pub fn animate_position(&self, layout: &Rect, top: bool) -> Result<()> {
+        let hwnd = self.hwnd();
+        let curr_rect = WindowsApi::window_rect(hwnd).unwrap();
+
+        let target_rect = *layout;
+        let duration = Duration::from_millis(ANIMATION_DURATION.load(Ordering::SeqCst));
+        let mut animation = self.animation;
+
+        border_manager::BORDER_TEMPORARILY_DISABLED.store(true, Ordering::SeqCst);
+        border_manager::send_notification();
+
+        stackbar_manager::STACKBAR_TEMPORARILY_DISABLED.store(true, Ordering::SeqCst);
+        stackbar_manager::send_notification();
+
+        std::thread::spawn(move || {
+            animation.animate(duration, |progress: f64| {
+                let new_rect = Animation::lerp_rect(&curr_rect, &target_rect, progress);
+
+                if progress == 1.0 {
+                    WindowsApi::position_window(hwnd, &new_rect, top)?;
+                    if WindowsApi::foreground_window().unwrap_or_default() == hwnd.0 {
+                        focus_manager::send_notification(hwnd.0)
+                    }
+
+                    if ANIMATIONS_IN_PROGRESS.load(Ordering::Acquire) == 0 {
+                        border_manager::BORDER_TEMPORARILY_DISABLED.store(false, Ordering::SeqCst);
+                        stackbar_manager::STACKBAR_TEMPORARILY_DISABLED
+                            .store(false, Ordering::SeqCst);
+
+                        border_manager::send_notification();
+                        stackbar_manager::send_notification();
+                        transparency_manager::send_notification();
+                    }
+                } else {
+                    // using MoveWindow because it runs faster than SetWindowPos
+                    // so animation have more fps and feel smoother
+                    WindowsApi::move_window(hwnd, &new_rect, false)?;
+                    // WindowsApi::position_window(hwnd, &new_rect, top)?;
+                    WindowsApi::invalidate_rect(hwnd, None, false);
+                }
+
+                Ok(())
+            })
+        });
+
+        Ok(())
+    }
+
     pub fn set_position(&self, layout: &Rect, top: bool) -> Result<()> {
         if WindowsApi::window_rect(self.hwnd())?.eq(layout) {
             return Ok(());
         }
 
-        let rect = *layout;
-        WindowsApi::position_window(self.hwnd(), &rect, top)
+        if ANIMATION_ENABLED.load(Ordering::SeqCst)
+            && !ANIMATION_TEMPORARILY_DISABLED.load(Ordering::SeqCst)
+        {
+            self.animate_position(layout, top)
+        } else {
+            WindowsApi::position_window(self.hwnd(), layout, top)
+        }
     }
 
     pub fn is_maximized(self) -> bool {
@@ -360,6 +434,20 @@ impl Window {
 
         debug.is_window = true;
 
+        let rect = WindowsApi::window_rect(self.hwnd()).unwrap_or_default();
+
+        if rect.right < MINIMUM_WIDTH.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
+
+        debug.has_minimum_width = true;
+
+        if rect.bottom < MINIMUM_HEIGHT.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
+
+        debug.has_minimum_height = true;
+
         if self.title().is_err() {
             return Ok(false);
         }
@@ -416,6 +504,8 @@ impl Window {
 pub struct RuleDebug {
     pub should_manage: bool,
     pub is_window: bool,
+    pub has_minimum_width: bool,
+    pub has_minimum_height: bool,
     pub has_title: bool,
     pub is_cloaked: bool,
     pub allow_cloaked: bool,

@@ -151,9 +151,13 @@ lazy_static! {
             kind: ApplicationIdentifier::Class,
             id: String::from("IHWindowClass"),
             matching_strategy: Option::from(MatchingStrategy::Equals),
+        }),
+        MatchingRule::Simple(IdWithIdentifier {
+            kind: ApplicationIdentifier::Exe,
+            id: String::from("komorebi-bar.exe"),
+            matching_strategy: Option::from(MatchingStrategy::Equals),
         })
     ]));
-
     static ref PERMAIGNORE_CLASSES: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![
         "Chrome_RenderWidgetHostHWND".to_string(),
     ]));
@@ -225,7 +229,6 @@ pub static SESSION_ID: AtomicU32 = AtomicU32::new(0);
 
 pub static REMOVE_TITLEBARS: AtomicBool = AtomicBool::new(false);
 pub static ANIMATION_ENABLED: AtomicBool = AtomicBool::new(false);
-pub static ANIMATION_TEMPORARILY_DISABLED: AtomicBool = AtomicBool::new(false);
 pub static ANIMATION_DURATION: AtomicU64 = AtomicU64::new(250);
 
 #[must_use]

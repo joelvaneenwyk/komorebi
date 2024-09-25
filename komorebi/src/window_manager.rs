@@ -65,9 +65,9 @@ use crate::winevent_listener;
 use crate::workspace::Workspace;
 use crate::BorderColours;
 use crate::Colour;
+use crate::CrossBoundaryBehaviour;
 use crate::Rgb;
 use crate::WorkspaceRule;
-use crate::ANIMATION_TEMPORARILY_DISABLED;
 use crate::CUSTOM_FFM;
 use crate::DATA_DIR;
 use crate::DISPLAY_INDEX_PREFERENCES;
@@ -93,6 +93,7 @@ pub struct WindowManager {
     pub resize_delta: i32,
     pub window_container_behaviour: WindowContainerBehaviour,
     pub cross_monitor_move_behaviour: MoveBehaviour,
+    pub cross_boundary_behaviour: CrossBoundaryBehaviour,
     pub unmanaged_window_operation_behaviour: OperationBehaviour,
     pub focus_follows_mouse: Option<FocusFollowsMouseImplementation>,
     pub mouse_follows_focus: bool,
@@ -275,6 +276,7 @@ impl WindowManager {
             work_area_offset: None,
             window_container_behaviour: WindowContainerBehaviour::Create,
             cross_monitor_move_behaviour: MoveBehaviour::Swap,
+            cross_boundary_behaviour: CrossBoundaryBehaviour::Workspace,
             unmanaged_window_operation_behaviour: OperationBehaviour::Op,
             resize_delta: 50,
             focus_follows_mouse: None,
@@ -1113,7 +1115,6 @@ impl WindowManager {
         follow: bool,
     ) -> Result<()> {
         self.handle_unmanaged_window_behaviour()?;
-        ANIMATION_TEMPORARILY_DISABLED.store(true, Ordering::SeqCst);
 
         tracing::info!("moving container");
 
@@ -1121,7 +1122,7 @@ impl WindowManager {
 
         if focused_monitor_idx == monitor_idx {
             if let Some(workspace_idx) = workspace_idx {
-                return self.move_container_to_workspace(workspace_idx, follow);
+                return self.move_container_to_workspace(workspace_idx, follow, None);
             }
         }
 
@@ -1185,15 +1186,17 @@ impl WindowManager {
 
         self.update_focused_workspace(self.mouse_follows_focus, true)?;
 
-        ANIMATION_TEMPORARILY_DISABLED.store(false, Ordering::SeqCst);
-
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn move_container_to_workspace(&mut self, idx: usize, follow: bool) -> Result<()> {
+    pub fn move_container_to_workspace(
+        &mut self,
+        idx: usize,
+        follow: bool,
+        direction: Option<OperationDirection>,
+    ) -> Result<()> {
         self.handle_unmanaged_window_behaviour()?;
-        ANIMATION_TEMPORARILY_DISABLED.store(true, Ordering::SeqCst);
 
         tracing::info!("moving container");
 
@@ -1202,12 +1205,10 @@ impl WindowManager {
             .focused_monitor_mut()
             .ok_or_else(|| anyhow!("there is no monitor"))?;
 
-        monitor.move_container_to_workspace(idx, follow)?;
+        monitor.move_container_to_workspace(idx, follow, direction)?;
         monitor.load_focused_workspace(mouse_follows_focus)?;
 
         self.update_focused_workspace(mouse_follows_focus, true)?;
-
-        ANIMATION_TEMPORARILY_DISABLED.store(false, Ordering::SeqCst);
 
         Ok(())
     }
@@ -1246,6 +1247,7 @@ impl WindowManager {
         self.handle_unmanaged_window_behaviour()?;
 
         let workspace = self.focused_workspace()?;
+        let workspace_idx = self.focused_workspace_idx()?;
 
         tracing::info!("focusing container");
 
@@ -1257,6 +1259,70 @@ impl WindowManager {
 
         let mut cross_monitor_monocle = false;
 
+        // this is for when we are scrolling across workspaces like PaperWM
+        if new_idx.is_none()
+            && matches!(
+                self.cross_boundary_behaviour,
+                CrossBoundaryBehaviour::Workspace
+            )
+            && matches!(
+                direction,
+                OperationDirection::Left | OperationDirection::Right
+            )
+        {
+            let workspace_count = if let Some(monitor) = self.focused_monitor() {
+                monitor.workspaces().len()
+            } else {
+                1
+            };
+
+            let next_idx = match direction {
+                OperationDirection::Left => match workspace_idx {
+                    0 => workspace_count - 1,
+                    n => n - 1,
+                },
+                OperationDirection::Right => match workspace_idx {
+                    n if n == workspace_count - 1 => 0,
+                    n => n + 1,
+                },
+                _ => workspace_idx,
+            };
+
+            self.focus_workspace(next_idx)?;
+
+            if let Ok(focused_workspace) = self.focused_workspace_mut() {
+                if focused_workspace.monocle_container().is_none() {
+                    match direction {
+                        OperationDirection::Left => match focused_workspace.layout() {
+                            Layout::Default(layout) => {
+                                let target_index =
+                                    layout.rightmost_index(focused_workspace.containers().len());
+                                focused_workspace.focus_container(target_index);
+                            }
+                            Layout::Custom(_) => {
+                                focused_workspace.focus_container(
+                                    focused_workspace.containers().len().saturating_sub(1),
+                                );
+                            }
+                        },
+                        OperationDirection::Right => match focused_workspace.layout() {
+                            Layout::Default(layout) => {
+                                let target_index =
+                                    layout.leftmost_index(focused_workspace.containers().len());
+                                focused_workspace.focus_container(target_index);
+                            }
+                            Layout::Custom(_) => {
+                                focused_workspace.focus_container(0);
+                            }
+                        },
+                        _ => {}
+                    };
+                }
+            }
+
+            return Ok(());
+        }
+
         // if there is no container in that direction for this workspace
         match new_idx {
             None => {
@@ -1265,17 +1331,44 @@ impl WindowManager {
                     .ok_or_else(|| anyhow!("there is no container or monitor in this direction"))?;
 
                 self.focus_monitor(monitor_idx)?;
+                let mouse_follows_focus = self.mouse_follows_focus;
 
-                if let Ok(focused_workspace) = self.focused_workspace() {
+                if let Ok(focused_workspace) = self.focused_workspace_mut() {
                     if let Some(monocle) = focused_workspace.monocle_container() {
                         if let Some(window) = monocle.focused_window() {
-                            window.focus(self.mouse_follows_focus)?;
+                            window.focus(mouse_follows_focus)?;
                             WindowsApi::center_cursor_in_rect(&WindowsApi::window_rect(
                                 window.hwnd(),
                             )?)?;
 
                             cross_monitor_monocle = true;
                         }
+                    } else {
+                        match direction {
+                            OperationDirection::Left => match focused_workspace.layout() {
+                                Layout::Default(layout) => {
+                                    let target_index = layout
+                                        .rightmost_index(focused_workspace.containers().len());
+                                    focused_workspace.focus_container(target_index);
+                                }
+                                Layout::Custom(_) => {
+                                    focused_workspace.focus_container(
+                                        focused_workspace.containers().len().saturating_sub(1),
+                                    );
+                                }
+                            },
+                            OperationDirection::Right => match focused_workspace.layout() {
+                                Layout::Default(layout) => {
+                                    let target_index =
+                                        layout.leftmost_index(focused_workspace.containers().len());
+                                    focused_workspace.focus_container(target_index);
+                                }
+                                Layout::Custom(_) => {
+                                    focused_workspace.focus_container(0);
+                                }
+                            },
+                            _ => {}
+                        };
                     }
                 }
             }
@@ -1299,6 +1392,7 @@ impl WindowManager {
         self.handle_unmanaged_window_behaviour()?;
 
         let workspace = self.focused_workspace()?;
+        let workspace_idx = self.focused_workspace_idx()?;
 
         // removing this messes up the monitor / container / window index somewhere
         // and results in the wrong window getting moved across the monitor boundary
@@ -1312,12 +1406,42 @@ impl WindowManager {
         let origin_monitor_idx = self.focused_monitor_idx();
         let target_container_idx = workspace.new_idx_for_direction(direction);
 
-        let animation_temporarily_disabled = if target_container_idx.is_none() {
-            ANIMATION_TEMPORARILY_DISABLED.store(true, Ordering::SeqCst);
-            true
-        } else {
-            false
-        };
+        // this is for when we are scrolling across workspaces like PaperWM
+        if target_container_idx.is_none()
+            && matches!(
+                self.cross_boundary_behaviour,
+                CrossBoundaryBehaviour::Workspace
+            )
+            && matches!(
+                direction,
+                OperationDirection::Left | OperationDirection::Right
+            )
+        {
+            let workspace_count = if let Some(monitor) = self.focused_monitor() {
+                monitor.workspaces().len()
+            } else {
+                1
+            };
+
+            let next_idx = match direction {
+                OperationDirection::Left => match workspace_idx {
+                    0 => workspace_count - 1,
+                    n => n - 1,
+                },
+                OperationDirection::Right => match workspace_idx {
+                    n if n == workspace_count - 1 => 0,
+                    n => n + 1,
+                },
+                _ => workspace_idx,
+            };
+
+            // passing the direction here is how we handle whether to insert at the front
+            // or the back of the container vecdeque in the target workspace
+            self.move_container_to_workspace(next_idx, true, Some(direction))?;
+            self.update_focused_workspace(self.mouse_follows_focus, true)?;
+
+            return Ok(());
+        }
 
         match target_container_idx {
             // If there is nowhere to move on the current workspace, try to move it onto the monitor
@@ -1361,12 +1485,78 @@ impl WindowManager {
                     // get a mutable ref to the focused workspace on the target monitor
                     let target_workspace = self.focused_workspace_mut()?;
 
-                    // insert the origin container into the focused workspace on the target monitor
-                    // at the position where the currently focused container on that workspace is
-                    target_workspace.insert_container_at_idx(
-                        target_workspace.focused_container_idx(),
-                        origin_container,
-                    );
+                    match direction {
+                        OperationDirection::Left => {
+                            // insert the origin container into the focused workspace on the target monitor
+                            // at the back (or rightmost position) if we are moving across a boundary to
+                            // the left (back = right side of the target)
+                            match target_workspace.layout() {
+                                Layout::Default(layout) => match layout {
+                                    DefaultLayout::RightMainVerticalStack => {
+                                        target_workspace.add_container_to_front(origin_container);
+                                    }
+                                    DefaultLayout::UltrawideVerticalStack => {
+                                        if target_workspace.containers().len() == 1 {
+                                            target_workspace
+                                                .insert_container_at_idx(0, origin_container);
+                                        } else {
+                                            target_workspace
+                                                .add_container_to_back(origin_container);
+                                        }
+                                    }
+                                    _ => {
+                                        target_workspace.add_container_to_back(origin_container);
+                                    }
+                                },
+                                Layout::Custom(_) => {
+                                    target_workspace.add_container_to_back(origin_container);
+                                }
+                            }
+                        }
+                        OperationDirection::Right => {
+                            // insert the origin container into the focused workspace on the target monitor
+                            // at the front (or leftmost position) if we are moving across a boundary to the
+                            // right (front = left side of the target)
+                            match target_workspace.layout() {
+                                Layout::Default(layout) => {
+                                    let target_index =
+                                        layout.leftmost_index(target_workspace.containers().len());
+
+                                    match layout {
+                                        DefaultLayout::RightMainVerticalStack
+                                        | DefaultLayout::UltrawideVerticalStack => {
+                                            if target_workspace.containers().len() == 1 {
+                                                target_workspace
+                                                    .add_container_to_back(origin_container);
+                                            } else {
+                                                target_workspace.insert_container_at_idx(
+                                                    target_index,
+                                                    origin_container,
+                                                );
+                                            }
+                                        }
+                                        _ => {
+                                            target_workspace.insert_container_at_idx(
+                                                target_index,
+                                                origin_container,
+                                            );
+                                        }
+                                    }
+                                }
+                                Layout::Custom(_) => {
+                                    target_workspace.add_container_to_front(origin_container);
+                                }
+                            }
+                        }
+                        OperationDirection::Up | OperationDirection::Down => {
+                            // insert the origin container into the focused workspace on the target monitor
+                            // at the position where the currently focused container on that workspace is
+                            target_workspace.insert_container_at_idx(
+                                target_workspace.focused_container_idx(),
+                                origin_container,
+                            );
+                        }
+                    };
 
                     // if there is only one container on the target workspace after the insertion
                     // it means that there won't be one swapped back, so we have to decrement the
@@ -1444,10 +1634,6 @@ impl WindowManager {
         }
 
         self.update_focused_workspace(self.mouse_follows_focus, true)?;
-
-        if animation_temporarily_disabled {
-            ANIMATION_TEMPORARILY_DISABLED.store(false, Ordering::SeqCst);
-        }
 
         Ok(())
     }

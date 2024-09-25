@@ -133,6 +133,7 @@ pub enum SocketMessage {
     ClearNamedWorkspaceLayoutRules(String),
     // Configuration
     ReloadConfiguration,
+    ReplaceConfiguration(PathBuf),
     ReloadStaticConfiguration(PathBuf),
     WatchConfiguration(bool),
     CompleteConfiguration,
@@ -359,6 +360,16 @@ pub enum MoveBehaviour {
     Insert,
     /// Do nothing if trying to move a window container in the direction of an adjacent monitor
     NoOp,
+}
+
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, Display, EnumString, ValueEnum, JsonSchema,
+)]
+pub enum CrossBoundaryBehaviour {
+    /// Attempt to perform actions across a workspace boundary
+    Workspace,
+    /// Attempt to perform actions across a monitor boundary
+    Monitor,
 }
 
 #[derive(

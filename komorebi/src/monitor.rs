@@ -17,6 +17,9 @@ use crate::core::Rect;
 use crate::container::Container;
 use crate::ring::Ring;
 use crate::workspace::Workspace;
+use crate::DefaultLayout;
+use crate::Layout;
+use crate::OperationDirection;
 
 #[derive(
     Debug,
@@ -87,6 +90,22 @@ pub fn new(
 }
 
 impl Monitor {
+    pub fn placeholder() -> Self {
+        Self {
+            id: 0,
+            name: "PLACEHOLDER".to_string(),
+            device: "".to_string(),
+            device_id: "".to_string(),
+            size: Default::default(),
+            work_area_size: Default::default(),
+            work_area_offset: None,
+            window_based_work_area_offset: None,
+            window_based_work_area_offset_limit: 0,
+            workspaces: Default::default(),
+            last_focused_workspace: None,
+            workspace_names: Default::default(),
+        }
+    }
     pub fn load_focused_workspace(&mut self, mouse_follows_focus: bool) -> Result<()> {
         let focused_idx = self.focused_workspace_idx();
         for (i, workspace) in self.workspaces_mut().iter_mut().enumerate() {
@@ -114,7 +133,7 @@ impl Monitor {
                 .ok_or_else(|| anyhow!("there is no workspace"))?
         };
 
-        workspace.add_container(container);
+        workspace.add_container_to_back(container);
 
         Ok(())
     }
@@ -149,6 +168,7 @@ impl Monitor {
         &mut self,
         target_workspace_idx: usize,
         follow: bool,
+        direction: Option<OperationDirection>,
     ) -> Result<()> {
         let workspace = self
             .focused_workspace_mut()
@@ -173,7 +193,53 @@ impl Monitor {
             Some(workspace) => workspace,
         };
 
-        target_workspace.add_container(container);
+        match direction {
+            Some(OperationDirection::Left) => match target_workspace.layout() {
+                Layout::Default(layout) => match layout {
+                    DefaultLayout::RightMainVerticalStack => {
+                        target_workspace.add_container_to_front(container);
+                    }
+                    DefaultLayout::UltrawideVerticalStack => {
+                        if target_workspace.containers().len() == 1 {
+                            target_workspace.insert_container_at_idx(0, container);
+                        } else {
+                            target_workspace.add_container_to_back(container);
+                        }
+                    }
+                    _ => {
+                        target_workspace.add_container_to_back(container);
+                    }
+                },
+                Layout::Custom(_) => {
+                    target_workspace.add_container_to_back(container);
+                }
+            },
+            Some(OperationDirection::Right) => match target_workspace.layout() {
+                Layout::Default(layout) => {
+                    let target_index = layout.leftmost_index(target_workspace.containers().len());
+
+                    match layout {
+                        DefaultLayout::RightMainVerticalStack
+                        | DefaultLayout::UltrawideVerticalStack => {
+                            if target_workspace.containers().len() == 1 {
+                                target_workspace.add_container_to_back(container);
+                            } else {
+                                target_workspace.insert_container_at_idx(target_index, container);
+                            }
+                        }
+                        _ => {
+                            target_workspace.insert_container_at_idx(target_index, container);
+                        }
+                    }
+                }
+                Layout::Custom(_) => {
+                    target_workspace.add_container_to_front(container);
+                }
+            },
+            _ => {
+                target_workspace.add_container_to_back(container);
+            }
+        }
 
         if follow {
             self.focus_workspace(target_workspace_idx)?;

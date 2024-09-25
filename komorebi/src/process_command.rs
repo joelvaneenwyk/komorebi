@@ -4,6 +4,7 @@ use std::fs::OpenOptions;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Read;
+use std::net::Shutdown;
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::num::NonZeroUsize;
@@ -55,6 +56,7 @@ use crate::window::Window;
 use crate::window_manager;
 use crate::window_manager::WindowManager;
 use crate::windows_api::WindowsApi;
+use crate::winevent_listener;
 use crate::GlobalState;
 use crate::Notification;
 use crate::NotificationEvent;
@@ -440,7 +442,7 @@ impl WindowManager {
                 self.adjust_workspace_padding(sizing, adjustment)?;
             }
             SocketMessage::MoveContainerToWorkspaceNumber(workspace_idx) => {
-                self.move_container_to_workspace(workspace_idx, true)?;
+                self.move_container_to_workspace(workspace_idx, true, None)?;
             }
             SocketMessage::CycleMoveContainerToWorkspace(direction) => {
                 let focused_monitor = self
@@ -456,7 +458,7 @@ impl WindowManager {
                         .ok_or_else(|| anyhow!("there must be at least one workspace"))?,
                 );
 
-                self.move_container_to_workspace(workspace_idx, true)?;
+                self.move_container_to_workspace(workspace_idx, true, None)?;
             }
             SocketMessage::MoveContainerToMonitorNumber(monitor_idx) => {
                 self.move_container_to_monitor(monitor_idx, None, true)?;
@@ -474,7 +476,7 @@ impl WindowManager {
                 self.move_container_to_monitor(monitor_idx, None, true)?;
             }
             SocketMessage::SendContainerToWorkspaceNumber(workspace_idx) => {
-                self.move_container_to_workspace(workspace_idx, false)?;
+                self.move_container_to_workspace(workspace_idx, false, None)?;
             }
             SocketMessage::CycleSendContainerToWorkspace(direction) => {
                 let focused_monitor = self
@@ -490,7 +492,7 @@ impl WindowManager {
                         .ok_or_else(|| anyhow!("there must be at least one workspace"))?,
                 );
 
-                self.move_container_to_workspace(workspace_idx, false)?;
+                self.move_container_to_workspace(workspace_idx, false, None)?;
             }
             SocketMessage::SendContainerToMonitorNumber(monitor_idx) => {
                 self.move_container_to_monitor(monitor_idx, None, false)?;
@@ -778,6 +780,16 @@ impl WindowManager {
                 if WindowsApi::focus_follows_mouse()? {
                     WindowsApi::disable_focus_follows_mouse()?;
                 }
+
+                let sockets = SUBSCRIPTION_SOCKETS.lock();
+                for path in (*sockets).values() {
+                    if let Ok(stream) = UnixStream::connect(path) {
+                        stream.shutdown(Shutdown::Both)?;
+                    }
+                }
+
+                let socket = DATA_DIR.join("komorebi.sock");
+                let _ = std::fs::remove_file(socket);
 
                 std::process::exit(0)
             }
@@ -1085,6 +1097,33 @@ impl WindowManager {
             }
             SocketMessage::ReloadConfiguration => {
                 Self::reload_configuration();
+            }
+            SocketMessage::ReplaceConfiguration(ref config) => {
+                // Check that this is a valid static config file first
+                if StaticConfig::read(config).is_ok() {
+                    // Clear workspace rules; these will need to be replaced
+                    WORKSPACE_RULES.lock().clear();
+                    // Pause so that restored windows come to the foreground from all workspaces
+                    self.is_paused = true;
+                    // Bring all windows to the foreground
+                    self.restore_all_windows()?;
+
+                    // Create a new wm from the config path
+                    let mut wm = StaticConfig::preload(
+                        config,
+                        winevent_listener::event_rx(),
+                        self.command_listener.try_clone().ok(),
+                    )?;
+
+                    // Initialize the new wm
+                    wm.init()?;
+
+                    // This is equivalent to StaticConfig::postload for this use case
+                    StaticConfig::reload(config, &mut wm)?;
+
+                    // Set self to the new wm instance
+                    *self = wm;
+                }
             }
             SocketMessage::ReloadStaticConfiguration(ref pathbuf) => {
                 self.reload_static_configuration(pathbuf)?;

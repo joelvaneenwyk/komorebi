@@ -897,6 +897,7 @@ enum SubCommand {
     /// Show the path to komorebi.json
     #[clap(alias = "config")]
     Configuration,
+    /// Show the path to komorebi.bar.json
     #[clap(alias = "bar-config")]
     #[clap(alias = "bconfig")]
     BarConfiguration,
@@ -1281,16 +1282,16 @@ enum SubCommand {
     TransparencyAlpha(TransparencyAlpha),
     /// Toggle transparency for unfocused windows
     ToggleTransparency,
-    /// Enable or disable the window move animation
+    /// Enable or disable movement animations
     #[clap(arg_required_else_help = true)]
     Animation(Animation),
-    /// Set the duration for the window move animation in ms
+    /// Set the duration for movement animations in ms
     #[clap(arg_required_else_help = true)]
     AnimationDuration(AnimationDuration),
-    /// Set the frames per second for the window move animation
+    /// Set the frames per second for movement animations
     #[clap(arg_required_else_help = true)]
     AnimationFps(AnimationFps),
-    /// Set the ease function for the window move animation
+    /// Set the ease function for movement animations
     #[clap(arg_required_else_help = true)]
     AnimationStyle(AnimationStyle),
     /// Enable or disable focus follows mouse for the operating system
@@ -1416,7 +1417,7 @@ fn main() -> Result<()> {
             std::fs::write(WHKD_CONFIG_DIR.join("whkdrc"), whkdrc)?;
 
             println!("Example komorebi.json, komorebi.bar.json, whkdrc and latest applications.yaml files created");
-            println!("You can now run komorebic start --whkd");
+            println!("You can now run komorebic start --whkd --bar");
         }
         SubCommand::EnableAutostart(args) => {
             let mut current_exe = std::env::current_exe().expect("unable to get exec path");
@@ -2118,7 +2119,7 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
                         let hwnds: Vec<isize> = serde_json::from_reader(reader)?;
 
                         for hwnd in hwnds {
-                            restore_window(HWND(hwnd));
+                            restore_window(hwnd);
                         }
                     }
                     Err(error) => {
@@ -2297,7 +2298,7 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
             let hwnds: Vec<isize> = serde_json::from_reader(reader)?;
 
             for hwnd in hwnds {
-                restore_window(HWND(hwnd));
+                restore_window(hwnd);
             }
         }
         SubCommand::ResizeEdge(resize) => {
@@ -2589,14 +2590,17 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
 fn show_window(hwnd: HWND, command: SHOW_WINDOW_CMD) {
     // BOOL is returned but does not signify whether or not the operation was succesful
     // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
-    unsafe { ShowWindow(hwnd, command) };
+    // TODO: error handling
+    unsafe {
+        let _ = ShowWindow(hwnd, command);
+    };
 }
 
-fn remove_transparency(hwnd: HWND) {
-    let _ = komorebi_client::Window::from(hwnd.0).opaque();
+fn remove_transparency(hwnd: isize) {
+    let _ = komorebi_client::Window::from(hwnd).opaque();
 }
 
-fn restore_window(hwnd: HWND) {
-    show_window(hwnd, SW_RESTORE);
+fn restore_window(hwnd: isize) {
+    show_window(HWND(hwnd as *mut core::ffi::c_void), SW_RESTORE);
     remove_transparency(hwnd);
 }

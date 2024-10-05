@@ -16,7 +16,6 @@ use hotwatch::notify::ErrorKind as NotifyErrorKind;
 use hotwatch::EventKind;
 use hotwatch::Hotwatch;
 use parking_lot::Mutex;
-use regex::Regex;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -43,12 +42,14 @@ use crate::core::WindowContainerBehaviour;
 
 use crate::border_manager;
 use crate::border_manager::STYLE;
+use crate::config_generation::WorkspaceMatchingRule;
 use crate::container::Container;
 use crate::core::StackbarMode;
 use crate::current_virtual_desktop;
 use crate::load_configuration;
 use crate::monitor::Monitor;
 use crate::ring::Ring;
+use crate::should_act_individual;
 use crate::stackbar_manager::STACKBAR_FOCUSED_TEXT_COLOUR;
 use crate::stackbar_manager::STACKBAR_LABEL;
 use crate::stackbar_manager::STACKBAR_MODE;
@@ -67,7 +68,6 @@ use crate::BorderColours;
 use crate::Colour;
 use crate::CrossBoundaryBehaviour;
 use crate::Rgb;
-use crate::WorkspaceRule;
 use crate::CUSTOM_FFM;
 use crate::DATA_DIR;
 use crate::DISPLAY_INDEX_PREFERENCES;
@@ -79,9 +79,10 @@ use crate::MANAGE_IDENTIFIERS;
 use crate::MONITOR_INDEX_PREFERENCES;
 use crate::NO_TITLEBAR;
 use crate::OBJECT_NAME_CHANGE_ON_LAUNCH;
+use crate::REGEX_IDENTIFIERS;
 use crate::REMOVE_TITLEBARS;
 use crate::TRAY_AND_MULTI_WINDOW_IDENTIFIERS;
-use crate::WORKSPACE_RULES;
+use crate::WORKSPACE_MATCHING_RULES;
 
 #[derive(Debug)]
 pub struct WindowManager {
@@ -142,7 +143,7 @@ pub struct GlobalState {
     pub name_change_on_launch_identifiers: Vec<MatchingRule>,
     pub monitor_index_preferences: HashMap<usize, Rect>,
     pub display_index_preferences: HashMap<usize, String>,
-    pub workspace_rules: HashMap<String, WorkspaceRule>,
+    pub workspace_rules: Vec<WorkspaceMatchingRule>,
     pub window_hiding_behaviour: HidingBehaviour,
     pub configuration_dir: PathBuf,
     pub data_dir: PathBuf,
@@ -191,7 +192,7 @@ impl Default for GlobalState {
             name_change_on_launch_identifiers: OBJECT_NAME_CHANGE_ON_LAUNCH.lock().clone(),
             monitor_index_preferences: MONITOR_INDEX_PREFERENCES.lock().clone(),
             display_index_preferences: DISPLAY_INDEX_PREFERENCES.lock().clone(),
-            workspace_rules: WORKSPACE_RULES.lock().clone(),
+            workspace_rules: WORKSPACE_MATCHING_RULES.lock().clone(),
             window_hiding_behaviour: *HIDING_BEHAVIOUR.lock(),
             configuration_dir: HOME_DIR.clone(),
             data_dir: DATA_DIR.clone(),
@@ -233,7 +234,6 @@ struct EnforceWorkspaceRuleOp {
     target_monitor_idx: usize,
     target_workspace_idx: usize,
 }
-
 impl EnforceWorkspaceRuleOp {
     const fn is_origin(&self, monitor_idx: usize, workspace_idx: usize) -> bool {
         self.origin_monitor_idx == monitor_idx && self.origin_workspace_idx == workspace_idx
@@ -450,7 +450,8 @@ impl WindowManager {
             .ok_or_else(|| anyhow!("there is no monitor with that index"))?
             .focused_workspace_idx();
 
-        let workspace_rules = WORKSPACE_RULES.lock();
+        let workspace_matching_rules = WORKSPACE_MATCHING_RULES.lock();
+        let regex_identifiers = REGEX_IDENTIFIERS.lock();
         // Go through all the monitors and workspaces
         for (i, monitor) in self.monitors().iter().enumerate() {
             for (j, workspace) in monitor.workspaces().iter().enumerate() {
@@ -460,63 +461,61 @@ impl WindowManager {
                     let exe_name = window.exe()?;
                     let title = window.title()?;
                     let class = window.class()?;
+                    let path = window.path()?;
 
-                    let mut found_workspace_rule = workspace_rules.get(&exe_name);
-
-                    if found_workspace_rule.is_none() {
-                        found_workspace_rule = workspace_rules.get(&title);
-                    }
-
-                    if found_workspace_rule.is_none() {
-                        found_workspace_rule = workspace_rules.get(&class);
-                    }
-
-                    if found_workspace_rule.is_none() {
-                        for (k, v) in workspace_rules.iter() {
-                            if let Ok(re) = Regex::new(k) {
-                                if re.is_match(&exe_name) {
-                                    found_workspace_rule = Some(v);
+                    for rule in &*workspace_matching_rules {
+                        let matched = match &rule.matching_rule {
+                            MatchingRule::Simple(r) => should_act_individual(
+                                &title,
+                                &exe_name,
+                                &class,
+                                &path,
+                                r,
+                                &regex_identifiers,
+                            ),
+                            MatchingRule::Composite(r) => {
+                                let mut composite_results = vec![];
+                                for identifier in r {
+                                    composite_results.push(should_act_individual(
+                                        &title,
+                                        &exe_name,
+                                        &class,
+                                        &path,
+                                        identifier,
+                                        &regex_identifiers,
+                                    ));
                                 }
 
-                                if re.is_match(&title) {
-                                    found_workspace_rule = Some(v);
-                                }
-
-                                if re.is_match(&class) {
-                                    found_workspace_rule = Some(v);
-                                }
+                                composite_results.iter().all(|&x| x)
                             }
-                        }
-                    }
+                        };
 
-                    // If the executable names or titles of any of those windows are in our rules map
-                    if let Some((monitor_idx, workspace_idx, apply_on_first_show_only)) =
-                        found_workspace_rule
-                    {
-                        if *apply_on_first_show_only {
-                            if !already_moved_window_handles.contains(&window.hwnd) {
-                                already_moved_window_handles.insert(window.hwnd);
+                        if matched {
+                            if rule.initial_only {
+                                if !already_moved_window_handles.contains(&window.hwnd) {
+                                    already_moved_window_handles.insert(window.hwnd);
 
+                                    self.add_window_handle_to_move_based_on_workspace_rule(
+                                        &window.title()?,
+                                        window.hwnd,
+                                        i,
+                                        j,
+                                        rule.monitor_index,
+                                        rule.workspace_index,
+                                        &mut to_move,
+                                    );
+                                }
+                            } else {
                                 self.add_window_handle_to_move_based_on_workspace_rule(
                                     &window.title()?,
                                     window.hwnd,
                                     i,
                                     j,
-                                    *monitor_idx,
-                                    *workspace_idx,
+                                    rule.monitor_index,
+                                    rule.workspace_index,
                                     &mut to_move,
                                 );
                             }
-                        } else {
-                            self.add_window_handle_to_move_based_on_workspace_rule(
-                                &window.title()?,
-                                window.hwnd,
-                                i,
-                                j,
-                                *monitor_idx,
-                                *workspace_idx,
-                                &mut to_move,
-                            );
                         }
                     }
                 }
@@ -819,35 +818,44 @@ impl WindowManager {
                 let rect = self.focused_monitor_size()?;
                 WindowsApi::center_cursor_in_rect(&rect)?;
 
-                match WindowsApi::raise_and_focus_window(desktop_window.hwnd()) {
+                match WindowsApi::raise_and_focus_window(desktop_window.hwnd) {
                     Ok(()) => {}
                     Err(error) => {
                         tracing::warn!("{} {}:{}", error, file!(), line!());
                     }
                 }
             }
-        }
+        } else {
+            if self.focused_workspace()?.containers().is_empty() {
+                let desktop_window = Window::from(WindowsApi::desktop_window()?);
 
-        // if we passed false for follow_focus and there is a container on the workspace
-        if !follow_focus && self.focused_container_mut().is_ok() {
-            // and we have a stack with >1 windows
-            if self.focused_container_mut()?.windows().len() > 1
-                // and we don't have a maxed window 
-                && self.focused_workspace()?.maximized_window().is_none()
-                // and we don't have a monocle container
-                && self.focused_workspace()?.monocle_container().is_none()
-            {
-                if let Ok(window) = self.focused_window_mut() {
-                    if trigger_focus {
-                        window.focus(self.mouse_follows_focus)?;
+                match WindowsApi::raise_and_focus_window(desktop_window.hwnd) {
+                    Ok(()) => {}
+                    Err(error) => {
+                        tracing::warn!("{} {}:{}", error, file!(), line!());
                     }
                 }
             }
-        }
 
-        // This is to correctly restore and focus when switching to a workspace which
-        // contains a managed maximized window
-        if !follow_focus {
+            // if we passed false for follow_focus and there is a container on the workspace
+            if self.focused_container_mut().is_ok() {
+                // and we have a stack with >1 windows
+                if self.focused_container_mut()?.windows().len() > 1
+                    // and we don't have a maxed window
+                    && self.focused_workspace()?.maximized_window().is_none()
+                    // and we don't have a monocle container
+                    && self.focused_workspace()?.monocle_container().is_none()
+                {
+                    if let Ok(window) = self.focused_window_mut() {
+                        if trigger_focus {
+                            window.focus(self.mouse_follows_focus)?;
+                        }
+                    }
+                }
+            }
+
+            // This is to correctly restore and focus when switching to a workspace which
+            // contains a managed maximized window
             if let Some(window) = self.focused_workspace()?.maximized_window() {
                 window.restore();
                 if trigger_focus {
@@ -960,6 +968,14 @@ impl WindowManager {
 
         for monitor in self.monitors_mut() {
             for workspace in monitor.workspaces_mut() {
+                if let Some(monocle) = workspace.monocle_container() {
+                    for window in monocle.windows() {
+                        if matches!(border_implementation, BorderImplementation::Windows) {
+                            window.remove_accent()?;
+                        }
+                    }
+                }
+
                 for containers in workspace.containers_mut() {
                     for window in containers.windows_mut() {
                         if no_titlebar.contains(&window.exe()?) {
@@ -1338,7 +1354,7 @@ impl WindowManager {
                         if let Some(window) = monocle.focused_window() {
                             window.focus(mouse_follows_focus)?;
                             WindowsApi::center_cursor_in_rect(&WindowsApi::window_rect(
-                                window.hwnd(),
+                                window.hwnd,
                             )?)?;
 
                             cross_monitor_monocle = true;
@@ -2605,7 +2621,7 @@ impl WindowManager {
     }
 
     pub fn monitor_idx_from_window(&mut self, window: Window) -> Option<usize> {
-        let hmonitor = WindowsApi::monitor_from_window(window.hwnd());
+        let hmonitor = WindowsApi::monitor_from_window(window.hwnd);
 
         for (i, monitor) in self.monitors().iter().enumerate() {
             if monitor.id() == hmonitor {

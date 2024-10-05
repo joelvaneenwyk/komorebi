@@ -10,6 +10,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+/// The `komorebi.bar.json` configuration file reference for `v0.1.30`
 pub struct KomobarConfig {
     /// Viewport options (see: https://docs.rs/egui/latest/egui/viewport/struct.ViewportBuilder.html)
     pub viewport: Option<ViewportConfig>,
@@ -57,7 +58,6 @@ impl KomobarConfig {
     pub fn read(path: &PathBuf) -> color_eyre::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let mut value: Self = match path.extension().unwrap().to_string_lossy().as_str() {
-            "yaml" => serde_yaml::from_str(&content)?,
             "json" => serde_json::from_str(&content)?,
             _ => panic!("unsupported format"),
         };

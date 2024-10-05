@@ -82,7 +82,7 @@ A [detailed installation and quickstart
 guide](https://lgug2z.github.io/komorebi/installation.html) is available which shows how to get started
 using `scoop`, `winget` or building from source.
 
-[![Watch the quickstart walkthrough video](https://img.youtube.com/vi/H9-_c1egQ4g/hqdefault.jpg)](https://www.youtube.com/watch?v=H9-_c1egQ4g)
+[![Watch the quickstart walkthrough video](https://img.youtube.com/vi/MMZUAtHbTYY/hqdefault.jpg)](https://www.youtube.com/watch?v=MMZUAtHbTYY)
 
 # Comparison With Fancy Zones
 
@@ -359,7 +359,7 @@ every `WindowManagerEvent` and `SocketMessage` handled by `komorebi` in a Rust c
 Below is a simple example of how to use `komorebi-client` in a basic Rust application.
 
 ```rust
-// komorebi-client = { git = "https://github.com/LGUG2Z/komorebi", tag = "v0.1.28"}
+// komorebi-client = { git = "https://github.com/LGUG2Z/komorebi", tag = "v0.1.29"}
 
 use anyhow::Result;
 use komorebi_client::Notification;

@@ -14,8 +14,9 @@ mod widget;
 use crate::bar::Komobar;
 use crate::config::KomobarConfig;
 use crate::config::Position;
+use atomic_float::AtomicF32;
 use clap::Parser;
-use color_eyre::eyre::OptionExt;
+use color_eyre::eyre::bail;
 use eframe::egui::ViewportBuilder;
 use font_loader::system_fonts;
 use hotwatch::EventKind;
@@ -26,12 +27,16 @@ use std::io::BufReader;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicI32;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
+use windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext;
+use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
 
 pub static WIDGET_SPACING: f32 = 10.0;
 pub static MAX_LABEL_WIDTH: AtomicI32 = AtomicI32::new(400);
+pub static DPI: AtomicF32 = AtomicF32::new(1.0);
 
 #[derive(Parser)]
 #[clap(author, about, version)]
@@ -45,9 +50,44 @@ struct Opts {
     /// Path to a JSON or YAML configuration file
     #[clap(short, long)]
     config: Option<PathBuf>,
+    /// Write an example komorebi.bar.json to disk
+    #[clap(long)]
+    quickstart: bool,
+}
+
+macro_rules! as_ptr {
+    ($value:expr) => {
+        $value as *mut core::ffi::c_void
+    };
+}
+
+pub fn dpi_for_monitor(hmonitor: isize) -> color_eyre::Result<f32> {
+    use windows::Win32::Graphics::Gdi::HMONITOR;
+    use windows::Win32::UI::HiDpi::GetDpiForMonitor;
+    use windows::Win32::UI::HiDpi::MDT_EFFECTIVE_DPI;
+
+    let mut dpi_x = u32::default();
+    let mut dpi_y = u32::default();
+
+    unsafe {
+        match GetDpiForMonitor(
+            HMONITOR(as_ptr!(hmonitor)),
+            MDT_EFFECTIVE_DPI,
+            std::ptr::addr_of_mut!(dpi_x),
+            std::ptr::addr_of_mut!(dpi_y),
+        ) {
+            Ok(_) => {}
+            Err(error) => bail!(error),
+        }
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    Ok(dpi_y as f32 / 96.0)
 }
 
 fn main() -> color_eyre::Result<()> {
+    unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) }?;
+
     let opts: Opts = Opts::parse();
 
     if opts.schema {
@@ -102,28 +142,43 @@ fn main() -> color_eyre::Result<()> {
         },
     );
 
+    if opts.quickstart {
+        let komorebi_bar_json = include_str!("../../docs/komorebi.bar.example.json").to_string();
+        std::fs::write(home_dir.join("komorebi.bar.json"), komorebi_bar_json)?;
+        println!(
+            "Example komorebi.bar.json file written to {}",
+            home_dir.as_path().display()
+        );
+
+        std::process::exit(0);
+    }
+
+    let default_config_path = home_dir.join("komorebi.bar.json");
+
     let config_path = opts.config.map_or_else(
         || {
-            let mut config = home_dir.join("komorebi.bar.json");
-            if !config.is_file() {
-                config.pop();
-                config.push("komorebi.bar.yaml");
-            }
-
-            if !config.is_file() {
+            if !default_config_path.is_file() {
                 None
             } else {
-                Some(config)
+                Some(default_config_path.clone())
             }
         },
         Option::from,
     );
 
     let config = match config_path {
-        None => panic!(
-            "no komorebi.bar.json or komorebi.bar.yaml found in {}",
-            home_dir.as_path().to_string_lossy()
-        ),
+        None => {
+            let komorebi_bar_json =
+                include_str!("../../docs/komorebi.bar.example.json").to_string();
+
+            std::fs::write(&default_config_path, komorebi_bar_json)?;
+            tracing::info!(
+                "created example configuration file: {}",
+                default_config_path.as_path().display()
+            );
+
+            KomobarConfig::read(&default_config_path)?
+        }
         Some(ref config) => {
             tracing::info!(
                 "found configuration file: {}",
@@ -134,33 +189,45 @@ fn main() -> color_eyre::Result<()> {
         }
     };
 
-    let config_path = config_path.ok_or_eyre("config path not found")?;
+    let config_path = config_path.unwrap_or(default_config_path);
 
     let state = serde_json::from_str::<komorebi_client::State>(&komorebi_client::send_query(
         &SocketMessage::State,
     )?)?;
 
+    let dpi = dpi_for_monitor(state.monitors.elements()[config.monitor.index].id())?;
+    DPI.store(dpi, Ordering::SeqCst);
+
     let mut viewport_builder = ViewportBuilder::default()
         .with_decorations(false)
         // .with_transparent(config.transparent)
         .with_taskbar(false)
-        .with_position(Position { x: 0.0, y: 0.0 })
+        .with_position(Position {
+            x: state.monitors.elements()[config.monitor.index].size().left as f32 / dpi,
+            y: state.monitors.elements()[config.monitor.index].size().top as f32 / dpi,
+        })
         .with_inner_size({
             Position {
-                x: state.monitors.elements()[config.monitor.index].size().right as f32,
-                y: 20.0,
+                x: state.monitors.elements()[config.monitor.index].size().right as f32 / dpi,
+                y: 50.0 / dpi,
             }
         });
 
     if let Some(viewport) = &config.viewport {
-        if let Some(position) = &viewport.position {
+        if let Some(mut position) = &viewport.position {
+            position.x /= dpi;
+            position.y /= dpi;
+
             let b = viewport_builder.clone();
-            viewport_builder = b.with_position(*position);
+            viewport_builder = b.with_position(position);
         }
 
-        if let Some(inner_size) = &viewport.inner_size {
+        if let Some(mut inner_size) = &viewport.inner_size {
+            inner_size.x /= dpi;
+            inner_size.y /= dpi;
+
             let b = viewport_builder.clone();
-            viewport_builder = b.with_inner_size(*inner_size);
+            viewport_builder = b.with_inner_size(inner_size);
         }
     }
 
@@ -222,10 +289,12 @@ fn main() -> color_eyre::Result<()> {
 
             let ctx_komorebi = cc.egui_ctx.clone();
             std::thread::spawn(move || {
-                let listener = komorebi_client::subscribe("komorebi-bar")
+                let subscriber_name = format!("komorebi-bar-{}", random_word::gen(random_word::Lang::En));
+
+                let listener = komorebi_client::subscribe(&subscriber_name)
                     .expect("could not subscribe to komorebi notifications");
 
-                tracing::info!("subscribed to komorebi notifications: \"komorebi-bar\"");
+                tracing::info!("subscribed to komorebi notifications: \"{}\"", subscriber_name);
 
                 for client in listener.incoming() {
                     match client {
@@ -239,9 +308,7 @@ fn main() -> color_eyre::Result<()> {
 
                                 // keep trying to reconnect to komorebi
                                 while komorebi_client::send_message(
-                                    &SocketMessage::AddSubscriberSocket(String::from(
-                                        "komorebi-bar",
-                                    )),
+                                    &SocketMessage::AddSubscriberSocket(subscriber_name.clone()),
                                 )
                                 .is_err()
                                 {

@@ -1,14 +1,13 @@
+use crate::render::RenderConfig;
+use crate::selected_frame::SelectableFrame;
 use crate::ui::CustomUi;
 use crate::widget::BarWidget;
 use crate::MAX_LABEL_WIDTH;
-use crate::WIDGET_SPACING;
 use eframe::egui::text::LayoutJob;
+use eframe::egui::Align;
 use eframe::egui::Context;
-use eframe::egui::FontId;
 use eframe::egui::Label;
-use eframe::egui::Sense;
 use eframe::egui::TextFormat;
-use eframe::egui::TextStyle;
 use eframe::egui::Ui;
 use eframe::egui::Vec2;
 use schemars::JsonSchema;
@@ -78,20 +77,13 @@ impl Media {
 }
 
 impl BarWidget for Media {
-    fn render(&mut self, ctx: &Context, ui: &mut Ui) {
+    fn render(&mut self, ctx: &Context, ui: &mut Ui, config: &mut RenderConfig) {
         if self.enable {
             let output = self.output();
             if !output.is_empty() {
-                let font_id = ctx
-                    .style()
-                    .text_styles
-                    .get(&TextStyle::Body)
-                    .cloned()
-                    .unwrap_or_else(FontId::default);
-
                 let mut layout_job = LayoutJob::simple(
                     egui_phosphor::regular::HEADPHONES.to_string(),
-                    font_id.clone(),
+                    config.icon_font_id.clone(),
                     ctx.style().visuals.selection.stroke.color,
                     100.0,
                 );
@@ -99,29 +91,33 @@ impl BarWidget for Media {
                 layout_job.append(
                     &output,
                     10.0,
-                    TextFormat::simple(font_id, ctx.style().visuals.text_color()),
+                    TextFormat {
+                        font_id: config.text_font_id.clone(),
+                        color: ctx.style().visuals.text_color(),
+                        valign: Align::Center,
+                        ..Default::default()
+                    },
                 );
 
-                let available_height = ui.available_height();
-                let mut custom_ui = CustomUi(ui);
+                config.apply_on_widget(false, ui, |ui| {
+                    if SelectableFrame::new(false)
+                        .show(ui, |ui| {
+                            let available_height = ui.available_height();
+                            let mut custom_ui = CustomUi(ui);
 
-                if custom_ui
-                    .add_sized_left_to_right(
-                        Vec2::new(
-                            MAX_LABEL_WIDTH.load(Ordering::SeqCst) as f32,
-                            available_height,
-                        ),
-                        Label::new(layout_job)
-                            .selectable(false)
-                            .sense(Sense::click())
-                            .truncate(),
-                    )
-                    .clicked()
-                {
-                    self.toggle();
-                }
-
-                ui.add_space(WIDGET_SPACING);
+                            custom_ui.add_sized_left_to_right(
+                                Vec2::new(
+                                    MAX_LABEL_WIDTH.load(Ordering::SeqCst) as f32,
+                                    available_height,
+                                ),
+                                Label::new(layout_job).selectable(false).truncate(),
+                            )
+                        })
+                        .clicked()
+                    {
+                        self.toggle();
+                    }
+                });
             }
         }
     }

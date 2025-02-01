@@ -25,7 +25,7 @@ use fs_tail::TailedFile;
 use komorebi_client::resolve_home_path;
 use komorebi_client::send_message;
 use komorebi_client::send_query;
-use komorebi_client::ApplicationConfiguration;
+use komorebi_client::ApplicationSpecificConfiguration;
 use komorebi_client::Notification;
 use lazy_static::lazy_static;
 use miette::NamedSource;
@@ -35,6 +35,7 @@ use miette::SourceSpan;
 use paste::paste;
 use schemars::gen::SchemaSettings;
 use schemars::schema_for;
+use serde::Deserialize;
 use sysinfo::ProcessesToUpdate;
 use which::which;
 use windows::Win32::Foundation::HWND;
@@ -160,6 +161,7 @@ gen_enum_subcommand_args! {
     CycleMoveWorkspaceToMonitor: CycleDirection,
     Stack: OperationDirection,
     CycleStack: CycleDirection,
+    CycleStackIndex: CycleDirection,
     FlipLayout: Axis,
     ChangeLayout: DefaultLayout,
     CycleLayout: CycleDirection,
@@ -583,7 +585,7 @@ macro_rules! gen_application_target_subcommand_args {
 }
 
 gen_application_target_subcommand_args! {
-    FloatRule,
+    IgnoreRule,
     ManageRule,
     IdentifyTrayApplication,
     IdentifyLayeredApplication,
@@ -720,15 +722,28 @@ struct BorderImplementation {
 }
 
 #[derive(Parser)]
+struct StackbarMode {
+    /// Desired stackbar mode
+    #[clap(value_enum)]
+    mode: komorebi_client::StackbarMode,
+}
+
+#[derive(Parser)]
 struct Animation {
     #[clap(value_enum)]
     boolean_state: BooleanState,
+    /// Animation type to apply the state to. If not specified, sets global state
+    #[clap(value_enum, short, long)]
+    animation_type: Option<komorebi_client::AnimationPrefix>,
 }
 
 #[derive(Parser)]
 struct AnimationDuration {
     /// Desired animation durations in ms
     duration: u64,
+    /// Animation type to apply the duration to. If not specified, sets global duration
+    #[clap(value_enum, short, long)]
+    animation_type: Option<komorebi_client::AnimationPrefix>,
 }
 
 #[derive(Parser)]
@@ -742,12 +757,16 @@ struct AnimationStyle {
     /// Desired ease function for animation
     #[clap(value_enum, short, long, default_value = "linear")]
     style: komorebi_client::AnimationStyle,
+    /// Animation type to apply the style to. If not specified, sets global style
+    #[clap(value_enum, short, long)]
+    animation_type: Option<komorebi_client::AnimationPrefix>,
 }
 
 #[derive(Parser)]
 #[allow(clippy::struct_excessive_bools)]
 struct Start {
     /// Allow the use of komorebi's custom focus-follows-mouse implementation
+    #[clap(hide = true)]
     #[clap(short, long = "ffm")]
     ffm: bool,
     /// Path to a static configuration JSON file
@@ -768,6 +787,12 @@ struct Start {
     /// Start komorebi-bar in a background process
     #[clap(long)]
     bar: bool,
+    /// Start masir in a background process for focus-follows-mouse
+    #[clap(long)]
+    masir: bool,
+    /// Do not attempt to auto-apply a dumped state temp file from a previously running instance of komorebi
+    #[clap(long)]
+    clean_state: bool,
 }
 
 #[derive(Parser)]
@@ -775,9 +800,34 @@ struct Stop {
     /// Stop whkd if it is running as a background process
     #[clap(long)]
     whkd: bool,
+    /// Stop ahk if it is running as a background process
+    #[clap(long)]
+    ahk: bool,
     /// Stop komorebi-bar if it is running as a background process
     #[clap(long)]
     bar: bool,
+    /// Stop masir if it is running as a background process
+    #[clap(long)]
+    masir: bool,
+    /// Do not restore windows after stopping komorebi
+    #[clap(long, hide = true)]
+    ignore_restore: bool,
+}
+
+#[derive(Parser)]
+struct Kill {
+    /// Kill whkd if it is running as a background process
+    #[clap(long)]
+    whkd: bool,
+    /// Kill ahk if it is running as a background process
+    #[clap(long)]
+    ahk: bool,
+    /// Kill komorebi-bar if it is running as a background process
+    #[clap(long)]
+    bar: bool,
+    /// Kill masir if it is running as a background process
+    #[clap(long)]
+    masir: bool,
 }
 
 #[derive(Parser)]
@@ -845,6 +895,12 @@ struct FormatAppSpecificConfiguration {
 }
 
 #[derive(Parser)]
+struct ConvertAppSpecificConfiguration {
+    /// YAML file from which the application-specific configurations should be loaded
+    path: PathBuf,
+}
+
+#[derive(Parser)]
 struct AltFocusHack {
     #[clap(value_enum)]
     boolean_state: BooleanState,
@@ -856,6 +912,7 @@ struct EnableAutostart {
     #[clap(action, short, long)]
     config: Option<PathBuf>,
     /// Enable komorebi's custom focus-follows-mouse implementation
+    #[clap(hide = true)]
     #[clap(short, long = "ffm")]
     ffm: bool,
     /// Enable autostart of whkd
@@ -867,12 +924,28 @@ struct EnableAutostart {
     /// Enable autostart of komorebi-bar
     #[clap(long)]
     bar: bool,
+    /// Enable autostart of masir
+    #[clap(long)]
+    masir: bool,
+}
+
+#[derive(Parser)]
+struct Check {
+    /// Path to a static configuration JSON file
+    #[clap(action, short, long)]
+    komorebi_config: Option<PathBuf>,
 }
 
 #[derive(Parser)]
 struct ReplaceConfiguration {
     /// Static configuration JSON file from which the configuration should be loaded
     path: PathBuf,
+}
+
+#[derive(Parser)]
+struct EagerFocus {
+    /// Case-sensitive exe identifier
+    exe: String,
 }
 
 #[derive(Parser)]
@@ -892,8 +965,10 @@ enum SubCommand {
     Start(Start),
     /// Stop the komorebi.exe process and restore all hidden windows
     Stop(Stop),
+    /// Kill background processes started by komorebic
+    Kill(Kill),
     /// Check komorebi configuration and related files for common errors
-    Check,
+    Check(Check),
     /// Show the path to komorebi.json
     #[clap(alias = "config")]
     Configuration,
@@ -966,6 +1041,9 @@ enum SubCommand {
     /// Move the focused window in the specified cycle direction
     #[clap(arg_required_else_help = true)]
     CycleMove(CycleMove),
+    /// Focus the first managed window matching the given exe
+    #[clap(arg_required_else_help = true)]
+    EagerFocus(EagerFocus),
     /// Stack the focused window in the specified direction
     #[clap(arg_required_else_help = true)]
     Stack(Stack),
@@ -974,6 +1052,9 @@ enum SubCommand {
     /// Cycle the focused stack in the specified cycle direction
     #[clap(arg_required_else_help = true)]
     CycleStack(CycleStack),
+    /// Cycle the index of the focused window in the focused stack in the specified cycle direction
+    #[clap(arg_required_else_help = true)]
+    CycleStackIndex(CycleStackIndex),
     /// Focus the specified window index in the focused stack
     #[clap(arg_required_else_help = true)]
     FocusStackWindow(FocusStackWindow),
@@ -1027,6 +1108,8 @@ enum SubCommand {
     /// Focus the specified monitor
     #[clap(arg_required_else_help = true)]
     FocusMonitor(FocusMonitor),
+    /// Focus the monitor at the current cursor location
+    FocusMonitorAtCursor,
     /// Focus the last focused workspace on the focused monitor
     FocusLastWorkspace,
     /// Focus the specified workspace on the focused monitor
@@ -1041,6 +1124,8 @@ enum SubCommand {
     /// Focus the specified workspace
     #[clap(arg_required_else_help = true)]
     FocusNamedWorkspace(FocusNamedWorkspace),
+    /// Close the focused workspace (must be empty and unnamed)
+    CloseWorkspace,
     /// Focus the monitor in the given cycle direction
     #[clap(arg_required_else_help = true)]
     CycleMonitor(CycleMonitor),
@@ -1089,9 +1174,10 @@ enum SubCommand {
     #[clap(arg_required_else_help = true)]
     CycleLayout(CycleLayout),
     /// Load a custom layout from file for the focused workspace
+    #[clap(hide = true)]
     #[clap(arg_required_else_help = true)]
     LoadCustomLayout(LoadCustomLayout),
-    /// Flip the layout on the focused workspace (BSP only)
+    /// Flip the layout on the focused workspace
     #[clap(arg_required_else_help = true)]
     FlipLayout(FlipLayout),
     /// Promote the focused window to the top of the tree
@@ -1133,9 +1219,11 @@ enum SubCommand {
     #[clap(arg_required_else_help = true)]
     NamedWorkspaceLayout(NamedWorkspaceLayout),
     /// Set a custom layout for the specified workspace
+    #[clap(hide = true)]
     #[clap(arg_required_else_help = true)]
     WorkspaceCustomLayout(WorkspaceCustomLayout),
     /// Set a custom layout for the specified workspace
+    #[clap(hide = true)]
     #[clap(arg_required_else_help = true)]
     NamedWorkspaceCustomLayout(NamedWorkspaceCustomLayout),
     /// Add a dynamic layout rule for the specified workspace
@@ -1145,9 +1233,11 @@ enum SubCommand {
     #[clap(arg_required_else_help = true)]
     NamedWorkspaceLayoutRule(NamedWorkspaceLayoutRule),
     /// Add a dynamic custom layout for the specified workspace
+    #[clap(hide = true)]
     #[clap(arg_required_else_help = true)]
     WorkspaceCustomLayoutRule(WorkspaceCustomLayoutRule),
     /// Add a dynamic custom layout for the specified workspace
+    #[clap(hide = true)]
     #[clap(arg_required_else_help = true)]
     NamedWorkspaceCustomLayoutRule(NamedWorkspaceCustomLayoutRule),
     /// Clear all dynamic layout rules for the specified workspace
@@ -1167,6 +1257,16 @@ enum SubCommand {
     WorkspaceName(WorkspaceName),
     /// Toggle the behaviour for new windows (stacking or dynamic tiling)
     ToggleWindowContainerBehaviour,
+    /// Enable or disable float override, which makes it so every new window opens in floating mode
+    ToggleFloatOverride,
+    /// Toggle the behaviour for new windows (stacking or dynamic tiling) for currently focused
+    /// workspace. If there was no behaviour set for the workspace previously it takes the opposite
+    /// of the global value.
+    ToggleWorkspaceWindowContainerBehaviour,
+    /// Enable or disable float override, which makes it so every new window opens in floating
+    /// mode, for the currently focused workspace. If there was no override value set for the
+    /// workspace previously it takes the opposite of the global value.
+    ToggleWorkspaceFloatOverride,
     /// Toggle window tiling on the focused workspace
     TogglePause,
     /// Toggle window tiling on the focused workspace
@@ -1208,9 +1308,10 @@ enum SubCommand {
     /// Set the operation behaviour when the focused window is not managed
     #[clap(arg_required_else_help = true)]
     UnmanagedWindowOperationBehaviour(UnmanagedWindowOperationBehaviour),
-    /// Add a rule to always float the specified application
+    /// Add a rule to ignore the specified application
     #[clap(arg_required_else_help = true)]
-    FloatRule(FloatRule),
+    #[clap(alias = "float-rule")]
+    IgnoreRule(IgnoreRule),
     /// Add a rule to always manage the specified application
     #[clap(arg_required_else_help = true)]
     ManageRule(ManageRule),
@@ -1234,6 +1335,8 @@ enum SubCommand {
     ClearNamedWorkspaceRules(ClearNamedWorkspaceRules),
     /// Remove all application association rules for all workspaces
     ClearAllWorkspaceRules,
+    /// Enforce all workspace rules, including initial workspace rules that have already been applied
+    EnforceWorkspaceRules,
     /// Identify an application that sends EVENT_OBJECT_NAMECHANGE on launch
     #[clap(arg_required_else_help = true)]
     IdentifyObjectNameChangeApplication(IdentifyObjectNameChangeApplication),
@@ -1274,6 +1377,9 @@ enum SubCommand {
     /// Set the border implementation
     #[clap(arg_required_else_help = true)]
     BorderImplementation(BorderImplementation),
+    /// Set the stackbar mode
+    #[clap(arg_required_else_help = true)]
+    StackbarMode(StackbarMode),
     /// Enable or disable transparency for unfocused windows
     #[clap(arg_required_else_help = true)]
     Transparency(Transparency),
@@ -1295,9 +1401,11 @@ enum SubCommand {
     #[clap(arg_required_else_help = true)]
     AnimationStyle(AnimationStyle),
     /// Enable or disable focus follows mouse for the operating system
+    #[clap(hide = true)]
     #[clap(arg_required_else_help = true)]
     FocusFollowsMouse(FocusFollowsMouse),
     /// Toggle focus follows mouse for the operating system
+    #[clap(hide = true)]
     #[clap(arg_required_else_help = true)]
     ToggleFocusFollowsMouse(ToggleFocusFollowsMouse),
     /// Enable or disable mouse follows focus on all workspaces
@@ -1313,14 +1421,19 @@ enum SubCommand {
     #[clap(arg_required_else_help = true)]
     #[clap(alias = "pwsh-asc")]
     PwshAppSpecificConfiguration(PwshAppSpecificConfiguration),
-    /// Format a YAML file for use with the 'ahk-app-specific-configuration' command
+    /// Convert a v1 ASC YAML file to a v2 ASC JSON file
+    #[clap(arg_required_else_help = true)]
+    #[clap(alias = "convert-asc")]
+    ConvertAppSpecificConfiguration(ConvertAppSpecificConfiguration),
+    /// Format a YAML file for use with the 'app-specific-configuration' command
     #[clap(arg_required_else_help = true)]
     #[clap(alias = "fmt-asc")]
+    #[clap(hide = true)]
     FormatAppSpecificConfiguration(FormatAppSpecificConfiguration),
-    /// Fetch the latest version of applications.yaml from komorebi-application-specific-configuration
+    /// Fetch the latest version of applications.json from komorebi-application-specific-configuration
     #[clap(alias = "fetch-asc")]
     FetchAppSpecificConfiguration,
-    /// Generate a JSON Schema for applications.yaml
+    /// Generate a JSON Schema for applications.json
     #[clap(alias = "asc-schema")]
     ApplicationSpecificConfigurationSchema,
     /// Generate a JSON Schema of subscription notifications
@@ -1378,6 +1491,14 @@ fn main() -> Result<()> {
                 "docgen",
                 "alt-focus-hack",
                 "identify-border-overflow-application",
+                "load-custom-layout",
+                "workspace-custom-layout",
+                "named-workspace-custom-layout",
+                "workspace-custom-layout-rule",
+                "named-workspace-custom-layout-rule",
+                "focus-follows-mouse",
+                "toggle-focus-follows-mouse",
+                "format-app-specific-configuration",
             ];
 
             for cmd in subcommands {
@@ -1410,13 +1531,13 @@ fn main() -> Result<()> {
             std::fs::write(HOME_DIR.join("komorebi.json"), komorebi_json)?;
             std::fs::write(HOME_DIR.join("komorebi.bar.json"), komorebi_bar_json)?;
 
-            let applications_yaml = include_str!("../applications.yaml");
-            std::fs::write(HOME_DIR.join("applications.yaml"), applications_yaml)?;
+            let applications_json = include_str!("../applications.json");
+            std::fs::write(HOME_DIR.join("applications.json"), applications_json)?;
 
             let whkdrc = include_str!("../../docs/whkdrc.sample");
             std::fs::write(WHKD_CONFIG_DIR.join("whkdrc"), whkdrc)?;
 
-            println!("Example komorebi.json, komorebi.bar.json, whkdrc and latest applications.yaml files created");
+            println!("Example komorebi.json, komorebi.bar.json, whkdrc and latest applications.json files created");
             println!("You can now run komorebic start --whkd --bar");
         }
         SubCommand::EnableAutostart(args) => {
@@ -1450,6 +1571,10 @@ fn main() -> Result<()> {
                 arguments.push_str(" --ahk");
             }
 
+            if args.masir {
+                arguments.push_str(" --masir");
+            }
+
             Command::new("powershell")
                 .arg("-c")
                 .arg("$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut($env:SHORTCUT_PATH); $Shortcut.TargetPath = $env:TARGET_PATH; $Shortcut.Arguments = $env:TARGET_ARGS; $Shortcut.Save()")
@@ -1470,7 +1595,7 @@ fn main() -> Result<()> {
                 std::fs::remove_file(shortcut_file)?;
             }
         }
-        SubCommand::Check => {
+        SubCommand::Check(args) => {
             let home_display = HOME_DIR.display();
             if HAS_CUSTOM_CONFIG_HOME.load(Ordering::SeqCst) {
                 println!("KOMOREBI_CONFIG_HOME detected: {home_display}\n");
@@ -1485,7 +1610,15 @@ fn main() -> Result<()> {
 
             println!("Looking for configuration files in {home_display}\n");
 
-            let static_config = HOME_DIR.join("komorebi.json");
+            let static_config = if let Some(static_config) = args.komorebi_config {
+                println!(
+                    "Using an arbitrary configuration file passed to --komorebi-config flag\n"
+                );
+                static_config
+            } else {
+                HOME_DIR.join("komorebi.json")
+            };
+
             let config_pwsh = HOME_DIR.join("komorebi.ps1");
             let config_ahk = HOME_DIR.join("komorebi.ahk");
             let config_whkd = WHKD_CONFIG_DIR.join("whkdrc");
@@ -1517,26 +1650,15 @@ fn main() -> Result<()> {
 
                 println!("Found komorebi.json; this file can be passed to the start command with the --config flag\n");
 
-                if let Ok(config) = &parsed_config {
-                    if let Some(asc_path) = config.get("app_specific_configuration_path") {
-                        let mut normalized_asc_path = asc_path
-                            .to_string()
-                            .replace(
-                                "$Env:USERPROFILE",
-                                &dirs::home_dir().unwrap().to_string_lossy(),
-                            )
-                            .replace('"', "")
-                            .replace('\\', "/");
-
-                        if let Ok(komorebi_config_home) = std::env::var("KOMOREBI_CONFIG_HOME") {
-                            normalized_asc_path = normalized_asc_path
-                                .replace("$Env:KOMOREBI_CONFIG_HOME", &komorebi_config_home)
-                                .replace('"', "")
-                                .replace('\\', "/");
+                if let Ok(config) = StaticConfig::read(&static_config) {
+                    match config.app_specific_configuration_path {
+                        None => {
+                            println!("Application specific configuration file path has not been set. Try running 'komorebic fetch-asc'\n");
                         }
-
-                        if !Path::exists(Path::new(&normalized_asc_path)) {
-                            println!("Application specific configuration file path '{normalized_asc_path}' does not exist. Try running 'komorebic fetch-asc'\n");
+                        Some(path) => {
+                            if !Path::exists(Path::new(&path)) {
+                                println!("Application specific configuration file path '{}' does not exist. Try running 'komorebic fetch-asc'\n", path.display());
+                            }
                         }
                     }
                 }
@@ -1545,6 +1667,12 @@ fn main() -> Result<()> {
                 // so that more basic errors above can be shown to the error before schema-specific
                 // errors
                 let _ = serde_json::from_str::<StaticConfig>(&config_source)?;
+
+                let path = resolve_home_path(static_config)?;
+                let raw = std::fs::read_to_string(path)?;
+                StaticConfig::aliases(&raw);
+                StaticConfig::deprecated(&raw);
+                StaticConfig::end_of_life(&raw);
 
                 if config_whkd.exists() {
                     println!("Found {}; key bindings will be loaded from here when whkd is started, and you can start it automatically using the --whkd flag\n", config_whkd.to_string_lossy());
@@ -1566,6 +1694,30 @@ fn main() -> Result<()> {
             } else {
                 println!("No komorebi configuration found in {home_display}\n");
                 println!("If running 'komorebic start --await-configuration', you will manually have to call the following command to begin tiling: komorebic complete-configuration\n");
+            }
+
+            let client = reqwest::blocking::Client::new();
+
+            if let Ok(response) = client
+                .get("https://api.github.com/repos/LGUG2Z/komorebi/releases/latest")
+                .header("User-Agent", "komorebic-version-checker")
+                .send()
+            {
+                let version = env!("CARGO_PKG_VERSION");
+
+                #[derive(Deserialize)]
+                struct Release {
+                    tag_name: String,
+                }
+
+                if let Ok(release) =
+                    serde_json::from_str::<Release>(&response.text().unwrap_or_default())
+                {
+                    let trimmed = release.tag_name.trim_start_matches("v");
+                    if trimmed > version {
+                        println!("An updated version of komorebi is available! https://github.com/LGUG2Z/komorebi/releases/v{trimmed}");
+                    }
+                }
             }
         }
         SubCommand::Configuration => {
@@ -1634,6 +1786,9 @@ fn main() -> Result<()> {
         }
         SubCommand::CycleMove(arg) => {
             send_message(&SocketMessage::CycleMoveWindow(arg.cycle_direction))?;
+        }
+        SubCommand::EagerFocus(arg) => {
+            send_message(&SocketMessage::EagerFocus(arg.exe))?;
         }
         SubCommand::MoveToMonitor(arg) => {
             send_message(&SocketMessage::MoveContainerToMonitorNumber(arg.target))?;
@@ -1875,6 +2030,10 @@ fn main() -> Result<()> {
                 bail!("could not find whkd, please make sure it is installed before using the --whkd flag");
             }
 
+            if arg.masir && which("masir").is_err() {
+                bail!("could not find masir, please make sure it is installed before using the --masir flag");
+            }
+
             if arg.ahk && which(&ahk).is_err() {
                 bail!("could not find autohotkey, please make sure it is installed before using the --ahk flag");
             }
@@ -1925,6 +2084,10 @@ fn main() -> Result<()> {
                 flags.push(format!("'--tcp-port={port}'"));
             }
 
+            if arg.clean_state {
+                flags.push("'--clean-state'".to_string());
+            }
+
             let script = if flags.is_empty() {
                 format!(
                     "Start-Process '{}' -WindowStyle hidden",
@@ -1938,8 +2101,14 @@ fn main() -> Result<()> {
                 )
             };
 
+            let mut system = sysinfo::System::new_all();
+            system.refresh_processes(ProcessesToUpdate::All, true);
+
             let mut attempts = 0;
-            let mut running = false;
+            let mut running = system
+                .processes_by_name("komorebi.exe".as_ref())
+                .next()
+                .is_some();
 
             while !running && attempts <= 2 {
                 match powershell_script::run(&script) {
@@ -1954,8 +2123,7 @@ fn main() -> Result<()> {
                 print!("Waiting for komorebi.exe to start...");
                 std::thread::sleep(Duration::from_secs(3));
 
-                let mut system = sysinfo::System::new_all();
-                system.refresh_processes(ProcessesToUpdate::All);
+                system.refresh_processes(ProcessesToUpdate::All, true);
 
                 if system
                     .processes_by_name("komorebi.exe".as_ref())
@@ -2010,7 +2178,7 @@ if (!(Get-Process whkd -ErrorAction SilentlyContinue))
 
                 let script = format!(
                     r#"
-  Start-Process '{ahk}' '{config}' -WindowStyle hidden
+  Start-Process '"{ahk}"' '"{config}"' -WindowStyle hidden
                 "#,
                     config = config_ahk.display()
                 );
@@ -2025,11 +2193,59 @@ if (!(Get-Process whkd -ErrorAction SilentlyContinue))
                 }
             }
 
+            let static_config = arg.config.clone().map_or_else(
+                || {
+                    let komorebi_json = HOME_DIR.join("komorebi.json");
+                    if komorebi_json.is_file() {
+                        Option::from(komorebi_json)
+                    } else {
+                        None
+                    }
+                },
+                Option::from,
+            );
+
             if arg.bar {
-                let script = r"
+                if let Some(config) = &static_config {
+                    let mut config = StaticConfig::read(config)?;
+                    if let Some(display_bar_configurations) = &mut config.bar_configurations {
+                        for config_file_path in &mut *display_bar_configurations {
+                            let script = r#"Start-Process "komorebi-bar" '"--config" "CONFIGFILE"' -WindowStyle hidden"#
+                            .replace("CONFIGFILE", &config_file_path.to_string_lossy());
+
+                            match powershell_script::run(&script) {
+                                Ok(_) => {
+                                    println!("{script}");
+                                }
+                                Err(error) => {
+                                    println!("Error: {error}");
+                                }
+                            }
+                        }
+                    } else {
+                        let script = r"
 if (!(Get-Process komorebi-bar -ErrorAction SilentlyContinue))
 {
   Start-Process komorebi-bar -WindowStyle hidden
+}
+                ";
+                        match powershell_script::run(script) {
+                            Ok(_) => {
+                                println!("{script}");
+                            }
+                            Err(error) => {
+                                println!("Error: {error}");
+                            }
+                        }
+                    }
+                }
+            }
+
+            if arg.masir {
+                let script = r"
+if (!(Get-Process masir -ErrorAction SilentlyContinue))
+{
+  Start-Process masir -WindowStyle hidden
 }
                 ";
                 match powershell_script::run(script) {
@@ -2043,18 +2259,25 @@ if (!(Get-Process komorebi-bar -ErrorAction SilentlyContinue))
             }
 
             println!("\nThank you for using komorebi!\n");
-            println!("* Become a sponsor https://github.com/sponsors/LGUG2Z - Even $1/month makes a big difference");
-            println!(
-                "* Subscribe to https://youtube.com/@LGUG2Z - Live dev videos and feature previews"
-            );
+            println!("# Commercial Use License");
+            println!("* View licensing options https://lgug2z.com/software/komorebi - A commercial use license is required to use komorebi at work");
+            println!("\n# Personal Use Sponsorship");
+            println!("* Become a sponsor https://github.com/sponsors/LGUG2Z - $5/month makes a big difference");
+            println!("* Leave a tip https://ko-fi.com/lgug2z - An alternative to GitHub Sponsors");
+            println!("\n# Community");
             println!("* Join the Discord https://discord.gg/mGkn66PHkx - Chat, ask questions, share your desktops");
+            println!(
+                "* Subscribe to https://youtube.com/@LGUG2Z - Development videos, feature previews and release overviews"
+            );
+            println!("* Explore the Awesome Komorebi list https://github.com/LGUG2Z/awesome-komorebi - Projects in the komorebi ecosystem");
+            println!("\n# Documentation");
             println!("* Read the docs https://lgug2z.github.io/komorebi - Quickly search through all komorebic commands");
 
-            let static_config = arg.config.map_or_else(
+            let bar_config = arg.config.map_or_else(
                 || {
-                    let komorebi_json = HOME_DIR.join("komorebi.json");
-                    if komorebi_json.is_file() {
-                        Option::from(komorebi_json)
+                    let bar_json = HOME_DIR.join("komorebi.bar.json");
+                    if bar_json.is_file() {
+                        Option::from(bar_json)
                     } else {
                         None
                     }
@@ -2062,11 +2285,42 @@ if (!(Get-Process komorebi-bar -ErrorAction SilentlyContinue))
                 Option::from,
             );
 
-            if let Some(config) = static_config {
+            if let Some(config) = &static_config {
                 let path = resolve_home_path(config)?;
                 let raw = std::fs::read_to_string(path)?;
                 StaticConfig::aliases(&raw);
                 StaticConfig::deprecated(&raw);
+                StaticConfig::end_of_life(&raw);
+            }
+
+            if bar_config.is_some() {
+                let output = Command::new("komorebi-bar.exe").arg("--aliases").output()?;
+                let stdout = String::from_utf8(output.stdout)?;
+                println!("{stdout}");
+            }
+
+            let client = reqwest::blocking::Client::new();
+
+            if let Ok(response) = client
+                .get("https://api.github.com/repos/LGUG2Z/komorebi/releases/latest")
+                .header("User-Agent", "komorebic-version-checker")
+                .send()
+            {
+                let version = env!("CARGO_PKG_VERSION");
+
+                #[derive(Deserialize)]
+                struct Release {
+                    tag_name: String,
+                }
+
+                if let Ok(release) =
+                    serde_json::from_str::<Release>(&response.text().unwrap_or_default())
+                {
+                    let trimmed = release.tag_name.trim_start_matches("v");
+                    if trimmed > version {
+                        println!("An updated version of komorebi is available! https://github.com/LGUG2Z/komorebi/releases/v{trimmed}");
+                    }
+                }
             }
         }
         SubCommand::Stop(arg) => {
@@ -2098,9 +2352,56 @@ Stop-Process -Name:komorebi-bar -ErrorAction SilentlyContinue
                 }
             }
 
-            send_message(&SocketMessage::Stop)?;
+            if arg.masir {
+                let script = r"
+Stop-Process -Name:masir -ErrorAction SilentlyContinue
+                ";
+                match powershell_script::run(script) {
+                    Ok(_) => {
+                        println!("{script}");
+                    }
+                    Err(error) => {
+                        println!("Error: {error}");
+                    }
+                }
+            }
+
+            if arg.ahk {
+                let script = r#"
+if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+    (Get-CimInstance Win32_Process | Where-Object {
+        ($_.CommandLine -like '*komorebi.ahk"') -and
+        ($_.Name -in @('AutoHotkey.exe', 'AutoHotkey64.exe', 'AutoHotkey32.exe', 'AutoHotkeyUX.exe'))
+    } | Select-Object -First 1) | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+    }
+} else {
+    (Get-WmiObject Win32_Process | Where-Object {
+        ($_.CommandLine -like '*komorebi.ahk"') -and
+        ($_.Name -in @('AutoHotkey.exe', 'AutoHotkey64.exe', 'AutoHotkey32.exe', 'AutoHotkeyUX.exe'))
+    } | Select-Object -First 1) | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+    }
+}
+"#;
+
+                match powershell_script::run(script) {
+                    Ok(_) => {
+                        println!("{script}");
+                    }
+                    Err(error) => {
+                        println!("Error: {error}");
+                    }
+                }
+            }
+
+            if arg.ignore_restore {
+                send_message(&SocketMessage::StopIgnoreRestore)?;
+            } else {
+                send_message(&SocketMessage::Stop)?;
+            }
             let mut system = sysinfo::System::new_all();
-            system.refresh_processes(ProcessesToUpdate::All);
+            system.refresh_processes(ProcessesToUpdate::All, true);
 
             if system.processes_by_name("komorebi.exe".as_ref()).count() >= 1 {
                 println!("komorebi is still running, attempting to force-quit");
@@ -2128,8 +2429,80 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
                 }
             }
         }
-        SubCommand::FloatRule(arg) => {
-            send_message(&SocketMessage::FloatRule(arg.identifier, arg.id))?;
+        SubCommand::Kill(arg) => {
+            if arg.whkd {
+                let script = r"
+Stop-Process -Name:whkd -ErrorAction SilentlyContinue
+                ";
+                match powershell_script::run(script) {
+                    Ok(_) => {
+                        println!("{script}");
+                    }
+                    Err(error) => {
+                        println!("Error: {error}");
+                    }
+                }
+            }
+
+            if arg.bar {
+                let script = r"
+Stop-Process -Name:komorebi-bar -ErrorAction SilentlyContinue
+                ";
+                match powershell_script::run(script) {
+                    Ok(_) => {
+                        println!("{script}");
+                    }
+                    Err(error) => {
+                        println!("Error: {error}");
+                    }
+                }
+            }
+
+            if arg.masir {
+                let script = r"
+Stop-Process -Name:masir -ErrorAction SilentlyContinue
+                ";
+                match powershell_script::run(script) {
+                    Ok(_) => {
+                        println!("{script}");
+                    }
+                    Err(error) => {
+                        println!("Error: {error}");
+                    }
+                }
+            }
+
+            if arg.ahk {
+                let script = r#"
+if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+    (Get-CimInstance Win32_Process | Where-Object {
+        ($_.CommandLine -like '*komorebi.ahk"') -and
+        ($_.Name -in @('AutoHotkey.exe', 'AutoHotkey64.exe', 'AutoHotkey32.exe', 'AutoHotkeyUX.exe'))
+    } | Select-Object -First 1) | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+    }
+} else {
+    (Get-WmiObject Win32_Process | Where-Object {
+        ($_.CommandLine -like '*komorebi.ahk"') -and
+        ($_.Name -in @('AutoHotkey.exe', 'AutoHotkey64.exe', 'AutoHotkey32.exe', 'AutoHotkeyUX.exe'))
+    } | Select-Object -First 1) | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+    }
+}
+"#;
+
+                match powershell_script::run(script) {
+                    Ok(_) => {
+                        println!("{script}");
+                    }
+                    Err(error) => {
+                        println!("Error: {error}");
+                    }
+                }
+            }
+        }
+        SubCommand::IgnoreRule(arg) => {
+            send_message(&SocketMessage::IgnoreRule(arg.identifier, arg.id))?;
         }
         SubCommand::ManageRule(arg) => {
             send_message(&SocketMessage::ManageRule(arg.identifier, arg.id))?;
@@ -2176,6 +2549,9 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
         SubCommand::ClearAllWorkspaceRules => {
             send_message(&SocketMessage::ClearAllWorkspaceRules)?;
         }
+        SubCommand::EnforceWorkspaceRules => {
+            send_message(&SocketMessage::EnforceWorkspaceRules)?;
+        }
         SubCommand::Stack(arg) => {
             send_message(&SocketMessage::StackWindow(arg.operation_direction))?;
         }
@@ -2194,6 +2570,9 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
         SubCommand::CycleStack(arg) => {
             send_message(&SocketMessage::CycleStack(arg.cycle_direction))?;
         }
+        SubCommand::CycleStackIndex(arg) => {
+            send_message(&SocketMessage::CycleStackIndex(arg.cycle_direction))?;
+        }
         SubCommand::ChangeLayout(arg) => {
             send_message(&SocketMessage::ChangeLayout(arg.default_layout))?;
         }
@@ -2210,6 +2589,9 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
         }
         SubCommand::FocusMonitor(arg) => {
             send_message(&SocketMessage::FocusMonitorNumber(arg.target))?;
+        }
+        SubCommand::FocusMonitorAtCursor => {
+            send_message(&SocketMessage::FocusMonitorAtCursor)?;
         }
         SubCommand::FocusLastWorkspace => {
             send_message(&SocketMessage::FocusLastWorkspace)?;
@@ -2228,6 +2610,9 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
         }
         SubCommand::FocusNamedWorkspace(arg) => {
             send_message(&SocketMessage::FocusNamedWorkspace(arg.workspace))?;
+        }
+        SubCommand::CloseWorkspace => {
+            send_message(&SocketMessage::CloseWorkspace)?;
         }
         SubCommand::CycleMonitor(arg) => {
             send_message(&SocketMessage::CycleFocusMonitor(arg.cycle_direction))?;
@@ -2415,6 +2800,9 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
         SubCommand::BorderImplementation(arg) => {
             send_message(&SocketMessage::BorderImplementation(arg.style))?;
         }
+        SubCommand::StackbarMode(arg) => {
+            send_message(&SocketMessage::StackbarMode(arg.mode))?;
+        }
         SubCommand::Transparency(arg) => {
             send_message(&SocketMessage::Transparency(arg.boolean_state.into()))?;
         }
@@ -2425,16 +2813,25 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
             send_message(&SocketMessage::ToggleTransparency)?;
         }
         SubCommand::Animation(arg) => {
-            send_message(&SocketMessage::Animation(arg.boolean_state.into()))?;
+            send_message(&SocketMessage::Animation(
+                arg.boolean_state.into(),
+                arg.animation_type,
+            ))?;
         }
         SubCommand::AnimationDuration(arg) => {
-            send_message(&SocketMessage::AnimationDuration(arg.duration))?;
+            send_message(&SocketMessage::AnimationDuration(
+                arg.duration,
+                arg.animation_type,
+            ))?;
         }
         SubCommand::AnimationFps(arg) => {
             send_message(&SocketMessage::AnimationFps(arg.fps))?;
         }
         SubCommand::AnimationStyle(arg) => {
-            send_message(&SocketMessage::AnimationStyle(arg.style))?;
+            send_message(&SocketMessage::AnimationStyle(
+                arg.style,
+                arg.animation_type,
+            ))?;
         }
 
         SubCommand::ResizeDelta(arg) => {
@@ -2442,6 +2839,15 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
         }
         SubCommand::ToggleWindowContainerBehaviour => {
             send_message(&SocketMessage::ToggleWindowContainerBehaviour)?;
+        }
+        SubCommand::ToggleFloatOverride => {
+            send_message(&SocketMessage::ToggleFloatOverride)?;
+        }
+        SubCommand::ToggleWorkspaceWindowContainerBehaviour => {
+            send_message(&SocketMessage::ToggleWorkspaceWindowContainerBehaviour)?;
+        }
+        SubCommand::ToggleWorkspaceFloatOverride => {
+            send_message(&SocketMessage::ToggleWorkspaceFloatOverride)?;
         }
         SubCommand::WindowHidingBehaviour(arg) => {
             send_message(&SocketMessage::WindowHidingBehaviour(arg.hiding_behaviour))?;
@@ -2513,6 +2919,14 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
                 generated_config.display()
             );
         }
+        SubCommand::ConvertAppSpecificConfiguration(arg) => {
+            let file_path = resolve_home_path(arg.path)?;
+            let content = std::fs::read_to_string(&file_path)?;
+            let mut asc = ApplicationConfigurationGenerator::load(&content)?;
+            asc.sort_by(|a, b| a.name.cmp(&b.name));
+            let v2 = ApplicationSpecificConfiguration::from(asc);
+            println!("{}", serde_json::to_string_pretty(&v2)?);
+        }
         SubCommand::FormatAppSpecificConfiguration(arg) => {
             let file_path = resolve_home_path(arg.path)?;
             let content = std::fs::read_to_string(&file_path)?;
@@ -2529,10 +2943,10 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
             println!("File successfully formatted for PRs to https://github.com/LGUG2Z/komorebi-application-specific-configuration");
         }
         SubCommand::FetchAppSpecificConfiguration => {
-            let content = reqwest::blocking::get("https://raw.githubusercontent.com/LGUG2Z/komorebi-application-specific-configuration/master/applications.yaml")?
+            let content = reqwest::blocking::get("https://raw.githubusercontent.com/LGUG2Z/komorebi-application-specific-configuration/master/applications.json")?
                 .text()?;
 
-            let output_file = HOME_DIR.join("applications.yaml");
+            let output_file = HOME_DIR.join("applications.json");
 
             let mut file = OpenOptions::new()
                 .write(true)
@@ -2542,14 +2956,14 @@ Stop-Process -Name:komorebi -ErrorAction SilentlyContinue
 
             file.write_all(content.as_bytes())?;
 
-            println!("Latest version of applications.yaml from https://github.com/LGUG2Z/komorebi-application-specific-configuration downloaded\n");
+            println!("Latest version of applications.json from https://github.com/LGUG2Z/komorebi-application-specific-configuration downloaded\n");
             println!(
                "You can add this to your komorebi.json static configuration file like this: \n\n\"app_specific_configuration_path\": \"{}\"",
-               output_file.display()
+               output_file.display().to_string().replace("\\", "/")
             );
         }
         SubCommand::ApplicationSpecificConfigurationSchema => {
-            let asc = schema_for!(Vec<ApplicationConfiguration>);
+            let asc = schema_for!(ApplicationSpecificConfiguration);
             let schema = serde_json::to_string_pretty(&asc)?;
             println!("{schema}");
         }

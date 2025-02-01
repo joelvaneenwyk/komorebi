@@ -20,6 +20,7 @@ use crate::workspace::Workspace;
 use crate::DefaultLayout;
 use crate::Layout;
 use crate::OperationDirection;
+use crate::WindowsApi;
 
 #[derive(
     Debug,
@@ -43,6 +44,8 @@ pub struct Monitor {
     #[getset(get = "pub", set = "pub")]
     device_id: String,
     #[getset(get = "pub", set = "pub")]
+    serial_number_id: Option<String>,
+    #[getset(get = "pub", set = "pub")]
     size: Rect,
     #[getset(get = "pub", set = "pub")]
     work_area_size: Rect,
@@ -62,6 +65,29 @@ pub struct Monitor {
 
 impl_ring_elements!(Monitor, Workspace);
 
+#[derive(Serialize)]
+pub struct MonitorInformation {
+    pub id: isize,
+    pub name: String,
+    pub device: String,
+    pub device_id: String,
+    pub serial_number_id: Option<String>,
+    pub size: Rect,
+}
+
+impl From<&Monitor> for MonitorInformation {
+    fn from(monitor: &Monitor) -> Self {
+        Self {
+            id: monitor.id,
+            name: monitor.name.clone(),
+            device: monitor.device.clone(),
+            device_id: monitor.device_id.clone(),
+            serial_number_id: monitor.serial_number_id.clone(),
+            size: monitor.size,
+        }
+    }
+}
+
 pub fn new(
     id: isize,
     size: Rect,
@@ -69,6 +95,7 @@ pub fn new(
     name: String,
     device: String,
     device_id: String,
+    serial_number_id: Option<String>,
 ) -> Monitor {
     let mut workspaces = Ring::default();
     workspaces.elements_mut().push_back(Workspace::default());
@@ -78,6 +105,7 @@ pub fn new(
         name,
         device,
         device_id,
+        serial_number_id,
         size,
         work_area_size,
         work_area_offset: None,
@@ -96,6 +124,7 @@ impl Monitor {
             name: "PLACEHOLDER".to_string(),
             device: "".to_string(),
             device_id: "".to_string(),
+            serial_number_id: None,
             size: Default::default(),
             work_area_size: Default::default(),
             work_area_offset: None,
@@ -106,6 +135,13 @@ impl Monitor {
             workspace_names: Default::default(),
         }
     }
+
+    pub fn focused_workspace_name(&self) -> Option<String> {
+        self.focused_workspace()
+            .map(|w| w.name().clone())
+            .unwrap_or(None)
+    }
+
     pub fn load_focused_workspace(&mut self, mouse_follows_focus: bool) -> Result<()> {
         let focused_idx = self.focused_workspace_idx();
         for (i, workspace) in self.workspaces_mut().iter_mut().enumerate() {
@@ -134,6 +170,86 @@ impl Monitor {
         };
 
         workspace.add_container_to_back(container);
+
+        Ok(())
+    }
+
+    /// Adds a container to this `Monitor` using the move direction to calculate if the container
+    /// should be added in front of all containers, in the back or in place of the focused
+    /// container, moving the rest along. The move direction should be from the origin monitor
+    /// towards the target monitor or from the origin workspace towards the target workspace.
+    pub fn add_container_with_direction(
+        &mut self,
+        container: Container,
+        workspace_idx: Option<usize>,
+        direction: OperationDirection,
+    ) -> Result<()> {
+        let workspace = if let Some(idx) = workspace_idx {
+            self.workspaces_mut()
+                .get_mut(idx)
+                .ok_or_else(|| anyhow!("there is no workspace at index {}", idx))?
+        } else {
+            self.focused_workspace_mut()
+                .ok_or_else(|| anyhow!("there is no workspace"))?
+        };
+
+        match direction {
+            OperationDirection::Left => {
+                // insert the container into the workspace on the monitor at the back (or rightmost position)
+                // if we are moving across a boundary to the left (back = right side of the target)
+                match workspace.layout() {
+                    Layout::Default(layout) => match layout {
+                        DefaultLayout::RightMainVerticalStack => {
+                            workspace.add_container_to_front(container);
+                        }
+                        DefaultLayout::UltrawideVerticalStack => {
+                            if workspace.containers().len() == 1 {
+                                workspace.insert_container_at_idx(0, container);
+                            } else {
+                                workspace.add_container_to_back(container);
+                            }
+                        }
+                        _ => {
+                            workspace.add_container_to_back(container);
+                        }
+                    },
+                    Layout::Custom(_) => {
+                        workspace.add_container_to_back(container);
+                    }
+                }
+            }
+            OperationDirection::Right => {
+                // insert the container into the workspace on the monitor at the front (or leftmost position)
+                // if we are moving across a boundary to the right (front = left side of the target)
+                match workspace.layout() {
+                    Layout::Default(layout) => {
+                        let target_index = layout.leftmost_index(workspace.containers().len());
+
+                        match layout {
+                            DefaultLayout::RightMainVerticalStack
+                            | DefaultLayout::UltrawideVerticalStack => {
+                                if workspace.containers().len() == 1 {
+                                    workspace.add_container_to_back(container);
+                                } else {
+                                    workspace.insert_container_at_idx(target_index, container);
+                                }
+                            }
+                            _ => {
+                                workspace.insert_container_at_idx(target_index, container);
+                            }
+                        }
+                    }
+                    Layout::Custom(_) => {
+                        workspace.add_container_to_front(container);
+                    }
+                }
+            }
+            OperationDirection::Up | OperationDirection::Down => {
+                // insert the container into the workspace on the monitor at the position
+                // where the currently focused container on that workspace is
+                workspace.insert_container_at_idx(workspace.focused_container_idx(), container);
+            }
+        };
 
         Ok(())
     }
@@ -178,65 +294,49 @@ impl Monitor {
             bail!("cannot move native maximized window to another monitor or workspace");
         }
 
-        let container = workspace
-            .remove_focused_container()
-            .ok_or_else(|| anyhow!("there is no container"))?;
+        let foreground_hwnd = WindowsApi::foreground_window()?;
+        let floating_window_index = workspace
+            .floating_windows()
+            .iter()
+            .position(|w| w.hwnd == foreground_hwnd);
 
-        let workspaces = self.workspaces_mut();
+        if let Some(idx) = floating_window_index {
+            let window = workspace.floating_windows_mut().remove(idx);
 
-        #[allow(clippy::option_if_let_else)]
-        let target_workspace = match workspaces.get_mut(target_workspace_idx) {
-            None => {
-                workspaces.resize(target_workspace_idx + 1, Workspace::default());
-                workspaces.get_mut(target_workspace_idx).unwrap()
-            }
-            Some(workspace) => workspace,
-        };
-
-        match direction {
-            Some(OperationDirection::Left) => match target_workspace.layout() {
-                Layout::Default(layout) => match layout {
-                    DefaultLayout::RightMainVerticalStack => {
-                        target_workspace.add_container_to_front(container);
-                    }
-                    DefaultLayout::UltrawideVerticalStack => {
-                        if target_workspace.containers().len() == 1 {
-                            target_workspace.insert_container_at_idx(0, container);
-                        } else {
-                            target_workspace.add_container_to_back(container);
-                        }
-                    }
-                    _ => {
-                        target_workspace.add_container_to_back(container);
-                    }
-                },
-                Layout::Custom(_) => {
-                    target_workspace.add_container_to_back(container);
+            let workspaces = self.workspaces_mut();
+            #[allow(clippy::option_if_let_else)]
+            let target_workspace = match workspaces.get_mut(target_workspace_idx) {
+                None => {
+                    workspaces.resize(target_workspace_idx + 1, Workspace::default());
+                    workspaces.get_mut(target_workspace_idx).unwrap()
                 }
-            },
-            Some(OperationDirection::Right) => match target_workspace.layout() {
-                Layout::Default(layout) => {
-                    let target_index = layout.leftmost_index(target_workspace.containers().len());
+                Some(workspace) => workspace,
+            };
 
-                    match layout {
-                        DefaultLayout::RightMainVerticalStack
-                        | DefaultLayout::UltrawideVerticalStack => {
-                            if target_workspace.containers().len() == 1 {
-                                target_workspace.add_container_to_back(container);
-                            } else {
-                                target_workspace.insert_container_at_idx(target_index, container);
-                            }
-                        }
-                        _ => {
-                            target_workspace.insert_container_at_idx(target_index, container);
-                        }
-                    }
+            target_workspace.floating_windows_mut().push(window);
+        } else {
+            let container = workspace
+                .remove_focused_container()
+                .ok_or_else(|| anyhow!("there is no container"))?;
+
+            let workspaces = self.workspaces_mut();
+
+            #[allow(clippy::option_if_let_else)]
+            let target_workspace = match workspaces.get_mut(target_workspace_idx) {
+                None => {
+                    workspaces.resize(target_workspace_idx + 1, Workspace::default());
+                    workspaces.get_mut(target_workspace_idx).unwrap()
                 }
-                Layout::Custom(_) => {
-                    target_workspace.add_container_to_front(container);
-                }
-            },
-            _ => {
+                Some(workspace) => workspace,
+            };
+
+            if let Some(direction) = direction {
+                self.add_container_with_direction(
+                    container,
+                    Some(target_workspace_idx),
+                    direction,
+                )?;
+            } else {
                 target_workspace.add_container_to_back(container);
             }
         }

@@ -77,6 +77,7 @@ use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 use windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow;
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+use windows::Win32::UI::WindowsAndMessaging::GetLayeredWindowAttributes;
 use windows::Win32::UI::WindowsAndMessaging::GetTopWindow;
 use windows::Win32::UI::WindowsAndMessaging::GetWindow;
 use windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW;
@@ -105,7 +106,6 @@ use windows::Win32::UI::WindowsAndMessaging::GWL_STYLE;
 use windows::Win32::UI::WindowsAndMessaging::GW_HWNDNEXT;
 use windows::Win32::UI::WindowsAndMessaging::HWND_TOP;
 use windows::Win32::UI::WindowsAndMessaging::LWA_ALPHA;
-use windows::Win32::UI::WindowsAndMessaging::LWA_COLORKEY;
 use windows::Win32::UI::WindowsAndMessaging::SET_WINDOW_POS_FLAGS;
 use windows::Win32::UI::WindowsAndMessaging::SHOW_WINDOW_CMD;
 use windows::Win32::UI::WindowsAndMessaging::SPIF_SENDCHANGE;
@@ -128,7 +128,6 @@ use windows::Win32::UI::WindowsAndMessaging::WM_CLOSE;
 use windows::Win32::UI::WindowsAndMessaging::WNDCLASSW;
 use windows::Win32::UI::WindowsAndMessaging::WNDENUMPROC;
 use windows::Win32::UI::WindowsAndMessaging::WS_DISABLED;
-use windows::Win32::UI::WindowsAndMessaging::WS_EX_LAYERED;
 use windows::Win32::UI::WindowsAndMessaging::WS_EX_NOACTIVATE;
 use windows::Win32::UI::WindowsAndMessaging::WS_EX_TOOLWINDOW;
 use windows::Win32::UI::WindowsAndMessaging::WS_EX_TOPMOST;
@@ -153,6 +152,7 @@ macro_rules! as_ptr {
     };
 }
 
+use crate::border_manager::Border;
 pub(crate) use as_ptr;
 
 pub enum WindowsResult<T, E> {
@@ -283,6 +283,7 @@ impl WindowsApi {
                 name,
                 device,
                 device_id,
+                display.serial_number_id,
             );
 
             let mut index_preference = None;
@@ -300,14 +301,21 @@ impl WindowsApi {
                 }
             }
 
-            if monitors.elements().is_empty() {
-                monitors.elements_mut().push_back(m);
-            } else if let Some(preference) = index_preference {
-                while *preference > monitors.elements().len() {
+            if let Some(preference) = index_preference {
+                while *preference >= monitors.elements().len() {
                     monitors.elements_mut().push_back(Monitor::placeholder());
                 }
 
-                monitors.elements_mut().insert(*preference, m);
+                let current_name = monitors
+                    .elements_mut()
+                    .get(*preference)
+                    .map_or("", |m| m.name());
+                if current_name == "PLACEHOLDER" {
+                    let _ = monitors.elements_mut().remove(*preference);
+                    monitors.elements_mut().insert(*preference, m);
+                } else {
+                    monitors.elements_mut().insert(*preference, m);
+                }
             } else {
                 monitors.elements_mut().push_back(m);
             }
@@ -445,7 +453,13 @@ impl WindowsApi {
     }
 
     pub fn set_border_pos(hwnd: isize, layout: &Rect, position: isize) -> Result<()> {
-        let flags = { SetWindowPosition::SHOW_WINDOW | SetWindowPosition::NO_ACTIVATE };
+        let flags = {
+            SetWindowPosition::NO_SEND_CHANGING
+                | SetWindowPosition::NO_ACTIVATE
+                | SetWindowPosition::NO_REDRAW
+                | SetWindowPosition::SHOW_WINDOW
+        };
+
         Self::set_window_pos(
             HWND(as_ptr!(hwnd)),
             layout,
@@ -923,6 +937,7 @@ impl WindowsApi {
                     name,
                     device,
                     device_id,
+                    display.serial_number_id,
                 );
 
                 return Ok(monitor);
@@ -1082,10 +1097,14 @@ impl WindowsApi {
         .process()
     }
 
-    pub fn create_border_window(name: PCWSTR, instance: isize) -> Result<isize> {
+    pub fn create_border_window(
+        name: PCWSTR,
+        instance: isize,
+        border: *const Border,
+    ) -> Result<isize> {
         unsafe {
-            let hwnd = CreateWindowExW(
-                WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+            CreateWindowExW(
+                WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
                 name,
                 name,
                 WS_POPUP | WS_SYSMENU,
@@ -1096,12 +1115,8 @@ impl WindowsApi {
                 None,
                 None,
                 HINSTANCE(as_ptr!(instance)),
-                None,
-            )?;
-
-            SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_COLORKEY)?;
-
-            hwnd
+                Some(border as _),
+            )?
         }
         .process()
     }
@@ -1118,6 +1133,21 @@ impl WindowsApi {
         }
 
         Ok(())
+    }
+
+    pub fn get_transparent(hwnd: isize) -> Result<u8> {
+        unsafe {
+            let mut alpha: u8 = u8::default();
+            let mut color_ref = COLORREF(-1i32 as u32);
+            let mut flags = LWA_ALPHA;
+            GetLayeredWindowAttributes(
+                HWND(as_ptr!(hwnd)),
+                Some(std::ptr::addr_of_mut!(color_ref)),
+                Some(std::ptr::addr_of_mut!(alpha)),
+                Some(std::ptr::addr_of_mut!(flags)),
+            )?;
+            Ok(alpha)
+        }
     }
 
     pub fn create_hidden_window(name: PCWSTR, instance: isize) -> Result<isize> {

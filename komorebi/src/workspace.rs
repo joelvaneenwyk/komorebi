@@ -24,16 +24,19 @@ use crate::border_manager::BORDER_OFFSET;
 use crate::border_manager::BORDER_WIDTH;
 use crate::container::Container;
 use crate::ring::Ring;
+use crate::should_act;
 use crate::stackbar_manager;
 use crate::stackbar_manager::STACKBAR_TAB_HEIGHT;
 use crate::static_config::WorkspaceConfig;
 use crate::window::Window;
 use crate::window::WindowDetails;
 use crate::windows_api::WindowsApi;
+use crate::WindowContainerBehaviour;
 use crate::DEFAULT_CONTAINER_PADDING;
 use crate::DEFAULT_WORKSPACE_PADDING;
 use crate::INITIAL_CONFIGURATION_LOADED;
 use crate::NO_TITLEBAR;
+use crate::REGEX_IDENTIFIERS;
 use crate::REMOVE_TITLEBARS;
 
 #[allow(clippy::struct_field_names)]
@@ -83,6 +86,12 @@ pub struct Workspace {
     tile: bool,
     #[getset(get_copy = "pub", set = "pub")]
     apply_window_based_work_area_offset: bool,
+    #[getset(get = "pub", get_mut = "pub", set = "pub")]
+    window_container_behaviour: Option<WindowContainerBehaviour>,
+    #[getset(get = "pub", get_mut = "pub", set = "pub")]
+    window_container_behaviour_rules: Option<Vec<(usize, WindowContainerBehaviour)>>,
+    #[getset(get = "pub", get_mut = "pub", set = "pub")]
+    float_override: Option<bool>,
 }
 
 impl_ring_elements!(Workspace, Container);
@@ -106,8 +115,19 @@ impl Default for Workspace {
             resize_dimensions: vec![],
             tile: true,
             apply_window_based_work_area_offset: true,
+            window_container_behaviour: None,
+            window_container_behaviour_rules: None,
+            float_override: None,
         }
     }
+}
+
+#[derive(Debug)]
+pub enum WorkspaceWindowLocation {
+    Monocle(usize), // window_idx
+    Maximized,
+    Container(usize, usize), // container_idx, window_idx
+    Floating(usize),         // idx in floating_windows
 }
 
 impl Workspace {
@@ -116,10 +136,14 @@ impl Workspace {
 
         if config.container_padding.is_some() {
             self.set_container_padding(config.container_padding);
+        } else {
+            self.set_container_padding(Some(DEFAULT_CONTAINER_PADDING.load(Ordering::SeqCst)));
         }
 
         if config.workspace_padding.is_some() {
             self.set_workspace_padding(config.workspace_padding);
+        } else {
+            self.set_container_padding(Some(DEFAULT_WORKSPACE_PADDING.load(Ordering::SeqCst)));
         }
 
         if let Some(layout) = &config.layout {
@@ -137,30 +161,53 @@ impl Workspace {
             self.tile = false;
         }
 
+        let mut all_layout_rules = vec![];
         if let Some(layout_rules) = &config.layout_rules {
-            let mut all_rules = vec![];
             for (count, rule) in layout_rules {
-                all_rules.push((*count, Layout::Default(*rule)));
+                all_layout_rules.push((*count, Layout::Default(*rule)));
             }
 
-            self.set_layout_rules(all_rules);
-
+            all_layout_rules.sort_by_key(|(i, _)| *i);
             self.tile = true;
         }
 
+        self.set_layout_rules(all_layout_rules.clone());
+
         if let Some(layout_rules) = &config.custom_layout_rules {
-            let rules = self.layout_rules_mut();
             for (count, pathbuf) in layout_rules {
                 let rule = CustomLayout::from_path(pathbuf)?;
-                rules.push((*count, Layout::Custom(rule)));
+                all_layout_rules.push((*count, Layout::Custom(rule)));
             }
 
+            all_layout_rules.sort_by_key(|(i, _)| *i);
             self.tile = true;
+            self.set_layout_rules(all_layout_rules);
         }
 
         self.set_apply_window_based_work_area_offset(
             config.apply_window_based_work_area_offset.unwrap_or(true),
         );
+
+        self.set_window_container_behaviour(config.window_container_behaviour);
+
+        if let Some(window_container_behaviour_rules) = &config.window_container_behaviour_rules {
+            if window_container_behaviour_rules.is_empty() {
+                self.set_window_container_behaviour_rules(None);
+            } else {
+                let mut all_rules = vec![];
+                for (count, behaviour) in window_container_behaviour_rules {
+                    all_rules.push((*count, *behaviour));
+                }
+
+                all_rules.sort_by_key(|(i, _)| *i);
+                self.set_window_container_behaviour_rules(Some(all_rules));
+            }
+        } else {
+            self.set_window_container_behaviour_rules(None);
+        }
+
+        self.set_float_override(config.float_override);
+        self.set_layout_flip(config.layout_flip);
 
         Ok(())
     }
@@ -217,23 +264,24 @@ impl Workspace {
             container.restore();
         }
 
-        for container in self.containers_mut() {
-            container.restore();
+        if let Some(container) = self.focused_container_mut() {
+            container.focus_window(container.focused_window_idx());
         }
 
         for window in self.floating_windows() {
             window.restore();
         }
 
-        if let Some(container) = self.focused_container_mut() {
-            container.focus_window(container.focused_window_idx());
-        }
-
         // Do this here to make sure that an error doesn't stop the restoration of other windows
-        // Maximised windows should always be drawn at the top of the Z order
+        // Maximised windows and floating windows should always be drawn at the top of the Z order
+        // when switching to a workspace
         if let Some(window) = to_focus {
-            if self.maximized_window().is_none() {
+            if self.maximized_window().is_none() && self.floating_windows().is_empty() {
                 window.focus(mouse_follows_focus)?;
+            } else if let Some(maximized_window) = self.maximized_window() {
+                maximized_window.focus(mouse_follows_focus)?;
+            } else if let Some(floating_window) = self.floating_windows().first() {
+                floating_window.focus(mouse_follows_focus)?;
             }
         }
 
@@ -292,19 +340,26 @@ impl Workspace {
         if !self.layout_rules().is_empty() {
             let mut updated_layout = None;
 
-            for rule in self.layout_rules() {
-                if self.containers().len() >= rule.0 {
-                    updated_layout = Option::from(rule.1.clone());
+            for (threshold, layout) in self.layout_rules() {
+                if self.containers().len() >= *threshold {
+                    updated_layout = Option::from(layout.clone());
                 }
             }
 
             if let Some(updated_layout) = updated_layout {
-                if !matches!(updated_layout, Layout::Default(DefaultLayout::BSP)) {
-                    self.set_layout_flip(None);
-                }
-
                 self.set_layout(updated_layout);
             }
+        }
+
+        if let Some(window_container_behaviour_rules) = self.window_container_behaviour_rules() {
+            let mut updated_behaviour = None;
+            for (threshold, behaviour) in window_container_behaviour_rules {
+                if self.containers().len() >= *threshold {
+                    updated_behaviour = Option::from(*behaviour);
+                }
+            }
+
+            self.set_window_container_behaviour(updated_behaviour);
         }
 
         let managed_maximized_window = self.maximized_window().is_some();
@@ -338,6 +393,7 @@ impl Workspace {
 
                 let should_remove_titlebars = REMOVE_TITLEBARS.load(Ordering::SeqCst);
                 let no_titlebar = NO_TITLEBAR.lock().clone();
+                let regex_identifiers = REGEX_IDENTIFIERS.lock().clone();
 
                 let container_padding = self.container_padding().unwrap_or(0);
                 let containers = self.containers_mut();
@@ -345,21 +401,7 @@ impl Workspace {
                 for (i, container) in containers.iter_mut().enumerate() {
                     let window_count = container.windows().len();
 
-                    if let (Some(window), Some(layout)) =
-                        (container.focused_window_mut(), layouts.get_mut(i))
-                    {
-                        if should_remove_titlebars && no_titlebar.contains(&window.exe()?) {
-                            window.remove_title_bar()?;
-                        } else if no_titlebar.contains(&window.exe()?) {
-                            window.add_title_bar()?;
-                        }
-
-                        // If a window has been unmaximized via toggle-maximize, this block
-                        // will make sure that it is unmaximized via restore_window
-                        if window.is_maximized() && !managed_maximized_window {
-                            WindowsApi::restore_window(window.hwnd);
-                        }
-
+                    if let Some(layout) = layouts.get_mut(i) {
                         {
                             let border_offset = BORDER_OFFSET.load(Ordering::SeqCst);
                             layout.add_padding(border_offset);
@@ -376,7 +418,35 @@ impl Workspace {
                             layout.bottom -= total_height;
                         }
 
-                        window.set_position(layout, false)?;
+                        for window in container.windows() {
+                            if container
+                                .focused_window()
+                                .is_some_and(|w| w.hwnd == window.hwnd)
+                            {
+                                let should_remove_titlebar_for_window = should_act(
+                                    &window.title().unwrap_or_default(),
+                                    &window.exe().unwrap_or_default(),
+                                    &window.class().unwrap_or_default(),
+                                    &window.path().unwrap_or_default(),
+                                    &no_titlebar,
+                                    &regex_identifiers,
+                                )
+                                .is_some();
+
+                                if should_remove_titlebars && should_remove_titlebar_for_window {
+                                    window.remove_title_bar()?;
+                                } else if should_remove_titlebar_for_window {
+                                    window.add_title_bar()?;
+                                }
+
+                                // If a window has been unmaximized via toggle-maximize, this block
+                                // will make sure that it is unmaximized via restore_window
+                                if window.is_maximized() && !managed_maximized_window {
+                                    WindowsApi::restore_window(window.hwnd);
+                                }
+                            }
+                            window.set_position(layout, false)?;
+                        }
                     }
                 }
 
@@ -390,26 +460,6 @@ impl Workspace {
         let container_count = self.containers().len();
         self.resize_dimensions_mut().resize(container_count, None);
 
-        Ok(())
-    }
-
-    // focus_changed performs updates in response to the fact that a focus
-    // change event has occurred. The focus change is assumed to be valid, and
-    // should not result in a new  focus change - the intent here is to update
-    // focus-reactive elements, such as the stackbar.
-    pub fn focus_changed(&mut self, hwnd: isize) -> Result<()> {
-        if !self.tile() {
-            return Ok(());
-        }
-
-        let containers = self.containers_mut();
-
-        for container in containers.iter_mut() {
-            if let Some(idx) = container.idx_for_window(hwnd) {
-                container.focus_window(idx);
-                container.restore();
-            }
-        }
         Ok(())
     }
 
@@ -439,8 +489,16 @@ impl Workspace {
             }
         }
 
-        for window in self.visible_windows_mut().into_iter().flatten() {
-            if !window.is_window() {
+        for window in self.visible_windows().into_iter().flatten() {
+            if !window.is_window()
+                // This one is a hack because WINWORD.EXE is an absolute trainwreck of an app
+                // when multiple docs are open, it keeps open an invisible window, with WS_EX_LAYERED
+                // (A STYLE THAT THE REGULAR WINDOWS NEED IN ORDER TO BE MANAGED!) when one of the
+                // docs is closed
+                //
+                // I hate every single person who worked on Microsoft Office 365, especially Word
+                || !window.is_visible()
+            {
                 hwnds.push(window.hwnd);
             }
         }
@@ -566,6 +624,41 @@ impl Workspace {
         None
     }
 
+    pub fn location_from_exe(&self, exe: &str) -> Option<WorkspaceWindowLocation> {
+        for (container_idx, container) in self.containers().iter().enumerate() {
+            if let Some(window_idx) = container.idx_from_exe(exe) {
+                return Some(WorkspaceWindowLocation::Container(
+                    container_idx,
+                    window_idx,
+                ));
+            }
+        }
+
+        if let Some(window) = self.maximized_window() {
+            if let Ok(window_exe) = window.exe() {
+                if exe == window_exe {
+                    return Some(WorkspaceWindowLocation::Maximized);
+                }
+            }
+        }
+
+        if let Some(container) = self.monocle_container() {
+            if let Some(window_idx) = container.idx_from_exe(exe) {
+                return Some(WorkspaceWindowLocation::Monocle(window_idx));
+            }
+        }
+
+        for (window_idx, window) in self.floating_windows().iter().enumerate() {
+            if let Ok(window_exe) = window.exe() {
+                if exe == window_exe {
+                    return Some(WorkspaceWindowLocation::Floating(window_idx));
+                }
+            }
+        }
+
+        None
+    }
+
     pub fn contains_managed_window(&self, hwnd: isize) -> bool {
         for container in self.containers() {
             if container.contains_window(hwnd) {
@@ -603,6 +696,13 @@ impl Workspace {
         }
 
         Ok(false)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.containers().is_empty()
+            && self.maximized_window().is_none()
+            && self.monocle_container().is_none()
+            && self.floating_windows().is_empty()
     }
 
     pub fn contains_window(&self, hwnd: isize) -> bool {
@@ -1410,8 +1510,19 @@ impl Workspace {
 
     pub fn visible_windows(&self) -> Vec<Option<&Window>> {
         let mut vec = vec![];
+
+        vec.push(self.maximized_window().as_ref());
+
+        if let Some(monocle) = self.monocle_container() {
+            vec.push(monocle.focused_window());
+        }
+
         for container in self.containers() {
             vec.push(container.focused_window());
+        }
+
+        for window in self.floating_windows() {
+            vec.push(Some(window));
         }
 
         vec
@@ -1419,6 +1530,20 @@ impl Workspace {
 
     pub fn visible_window_details(&self) -> Vec<WindowDetails> {
         let mut vec: Vec<WindowDetails> = vec![];
+
+        if let Some(maximized) = self.maximized_window() {
+            if let Ok(details) = (*maximized).try_into() {
+                vec.push(details);
+            }
+        }
+
+        if let Some(monocle) = self.monocle_container() {
+            if let Some(focused) = monocle.focused_window() {
+                if let Ok(details) = (*focused).try_into() {
+                    vec.push(details);
+                }
+            }
+        }
 
         for container in self.containers() {
             if let Some(focused) = container.focused_window() {
@@ -1428,13 +1553,10 @@ impl Workspace {
             }
         }
 
-        vec
-    }
-
-    pub fn visible_windows_mut(&mut self) -> Vec<Option<&mut Window>> {
-        let mut vec = vec![];
-        for container in self.containers_mut() {
-            vec.push(container.focused_window_mut());
+        for window in self.floating_windows() {
+            if let Ok(details) = (*window).try_into() {
+                vec.push(details);
+            }
         }
 
         vec

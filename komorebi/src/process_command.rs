@@ -4,7 +4,6 @@ use std::fs::OpenOptions;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Read;
-use std::net::Shutdown;
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::num::NonZeroUsize;
@@ -22,6 +21,9 @@ use schemars::gen::SchemaSettings;
 use schemars::schema_for;
 use uds_windows::UnixStream;
 
+use crate::animation::ANIMATION_DURATION_PER_ANIMATION;
+use crate::animation::ANIMATION_ENABLED_PER_ANIMATION;
+use crate::animation::ANIMATION_STYLE_PER_ANIMATION;
 use crate::core::config_generation::ApplicationConfiguration;
 use crate::core::config_generation::IdWithIdentifier;
 use crate::core::config_generation::MatchingRule;
@@ -40,17 +42,23 @@ use crate::core::StateQuery;
 use crate::core::WindowContainerBehaviour;
 use crate::core::WindowKind;
 
+use crate::animation::ANIMATION_DURATION_GLOBAL;
+use crate::animation::ANIMATION_ENABLED_GLOBAL;
+use crate::animation::ANIMATION_FPS;
+use crate::animation::ANIMATION_STYLE_GLOBAL;
 use crate::border_manager;
 use crate::border_manager::IMPLEMENTATION;
 use crate::border_manager::STYLE;
 use crate::colour::Rgb;
 use crate::config_generation::WorkspaceMatchingRule;
 use crate::current_virtual_desktop;
+use crate::monitor::MonitorInformation;
 use crate::notify_subscribers;
 use crate::stackbar_manager;
 use crate::stackbar_manager::STACKBAR_FONT_FAMILY;
 use crate::stackbar_manager::STACKBAR_FONT_SIZE;
 use crate::static_config::StaticConfig;
+use crate::theme_manager;
 use crate::transparency_manager;
 use crate::window::RuleDebug;
 use crate::window::Window;
@@ -58,18 +66,16 @@ use crate::window_manager;
 use crate::window_manager::WindowManager;
 use crate::windows_api::WindowsApi;
 use crate::winevent_listener;
+use crate::workspace::WorkspaceWindowLocation;
 use crate::GlobalState;
 use crate::Notification;
 use crate::NotificationEvent;
-use crate::ANIMATION_DURATION;
-use crate::ANIMATION_ENABLED;
-use crate::ANIMATION_FPS;
-use crate::ANIMATION_STYLE;
+use crate::State;
 use crate::CUSTOM_FFM;
 use crate::DATA_DIR;
 use crate::DISPLAY_INDEX_PREFERENCES;
-use crate::FLOAT_IDENTIFIERS;
 use crate::HIDING_BEHAVIOUR;
+use crate::IGNORE_IDENTIFIERS;
 use crate::INITIAL_CONFIGURATION_LOADED;
 use crate::LAYERED_WHITELIST;
 use crate::MANAGE_IDENTIFIERS;
@@ -79,6 +85,7 @@ use crate::OBJECT_NAME_CHANGE_ON_LAUNCH;
 use crate::REMOVE_TITLEBARS;
 use crate::SUBSCRIPTION_PIPES;
 use crate::SUBSCRIPTION_SOCKETS;
+use crate::SUBSCRIPTION_SOCKET_OPTIONS;
 use crate::TCP_CONNECTIONS;
 use crate::TRAY_AND_MULTI_WINDOW_IDENTIFIERS;
 use crate::WINDOWS_11;
@@ -106,10 +113,19 @@ pub fn listen_for_commands(wm: Arc<Mutex<WindowManager>>) {
             tracing::info!("listening on komorebi.sock");
             for client in listener.incoming() {
                 match client {
-                    Ok(stream) => match read_commands_uds(&wm, stream) {
-                        Ok(()) => {}
-                        Err(error) => tracing::error!("{}", error),
-                    },
+                    Ok(stream) => {
+                        let wm_clone = wm.clone();
+                        std::thread::spawn(move || {
+                            match stream.set_read_timeout(Some(Duration::from_secs(1))) {
+                                Ok(()) => {}
+                                Err(error) => tracing::error!("{}", error),
+                            }
+                            match read_commands_uds(&wm_clone, stream) {
+                                Ok(()) => {}
+                                Err(error) => tracing::error!("{}", error),
+                            }
+                        });
+                    }
                     Err(error) => {
                         tracing::error!("{}", error);
                         break;
@@ -187,6 +203,10 @@ impl WindowManager {
             }
         }
 
+        #[allow(clippy::useless_asref)]
+        // We don't have From implemented for &mut WindowManager
+        let initial_state = State::from(self.as_ref());
+
         match message {
             SocketMessage::CycleFocusWorkspace(_) | SocketMessage::FocusWorkspaceNumber(_) => {
                 if let Some(monitor) = self.focused_monitor_mut() {
@@ -211,6 +231,65 @@ impl WindowManager {
                 self.focus_container_in_direction(direction)?;
                 self.promote_container_to_front()?
             }
+            SocketMessage::EagerFocus(ref exe) => {
+                let focused_monitor_idx = self.focused_monitor_idx();
+                let focused_workspace_idx = self.focused_workspace_idx()?;
+
+                let mut window_location = None;
+                let mut monitor_workspace_indices = None;
+
+                'search: for (monitor_idx, monitor) in self.monitors().iter().enumerate() {
+                    for (workspace_idx, workspace) in monitor.workspaces().iter().enumerate() {
+                        if let Some(location) = workspace.location_from_exe(exe) {
+                            window_location = Some(location);
+                            monitor_workspace_indices = Some((monitor_idx, workspace_idx));
+                            break 'search;
+                        }
+                    }
+                }
+
+                if let Some((monitor_idx, workspace_idx)) = monitor_workspace_indices {
+                    if monitor_idx != focused_monitor_idx {
+                        self.focus_monitor(monitor_idx)?;
+                    }
+
+                    if workspace_idx != focused_workspace_idx {
+                        self.focus_workspace(workspace_idx)?;
+                    }
+                }
+
+                if let Some(location) = window_location {
+                    match location {
+                        WorkspaceWindowLocation::Monocle(window_idx) => {
+                            self.focus_container_window(window_idx)?;
+                        }
+                        WorkspaceWindowLocation::Maximized => {
+                            if let Some(window) =
+                                self.focused_workspace_mut()?.maximized_window_mut()
+                            {
+                                window.focus(self.mouse_follows_focus)?;
+                            }
+                        }
+                        WorkspaceWindowLocation::Container(container_idx, window_idx) => {
+                            let focused_container_idx = self.focused_container_idx()?;
+                            if container_idx != focused_container_idx {
+                                self.focused_workspace_mut()?.focus_container(container_idx);
+                            }
+
+                            self.focus_container_window(window_idx)?;
+                        }
+                        WorkspaceWindowLocation::Floating(window_idx) => {
+                            if let Some(window) = self
+                                .focused_workspace_mut()?
+                                .floating_windows_mut()
+                                .get_mut(window_idx)
+                            {
+                                window.focus(self.mouse_follows_focus)?;
+                            }
+                        }
+                    }
+                }
+            }
             SocketMessage::FocusWindow(direction) => {
                 self.focus_container_in_direction(direction)?;
             }
@@ -231,7 +310,18 @@ impl WindowManager {
                 self.cycle_container_window_in_direction(direction)?;
                 self.focused_window()?.focus(self.mouse_follows_focus)?;
             }
+            SocketMessage::CycleStackIndex(direction) => {
+                self.cycle_container_window_index_in_direction(direction)?;
+                self.focused_window()?.focus(self.mouse_follows_focus)?;
+            }
             SocketMessage::FocusStackWindow(idx) => {
+                // In case you are using this command on a bar on a monitor
+                // different from the currently focused one, you'd want that
+                // monitor to be focused so that the FocusStackWindow happens
+                // on the monitor with the bar you just pressed.
+                if let Some(monitor_idx) = self.monitor_idx_from_current_pos() {
+                    self.focus_monitor(monitor_idx)?;
+                }
                 self.focus_container_window(idx)?;
                 self.focused_window()?.focus(self.mouse_follows_focus)?;
             }
@@ -367,6 +457,13 @@ impl WindowManager {
                 let mut workspace_rules = WORKSPACE_MATCHING_RULES.lock();
                 workspace_rules.clear();
             }
+            SocketMessage::EnforceWorkspaceRules => {
+                {
+                    let mut already_moved = self.already_moved_window_handles.lock();
+                    already_moved.clear();
+                }
+                self.enforce_workspace_rules()?;
+            }
             SocketMessage::ManageRule(identifier, ref id) => {
                 let mut manage_identifiers = MANAGE_IDENTIFIERS.lock();
 
@@ -387,20 +484,20 @@ impl WindowManager {
                     }));
                 }
             }
-            SocketMessage::FloatRule(identifier, ref id) => {
-                let mut float_identifiers = FLOAT_IDENTIFIERS.lock();
+            SocketMessage::IgnoreRule(identifier, ref id) => {
+                let mut ignore_identifiers = IGNORE_IDENTIFIERS.lock();
 
                 let mut should_push = true;
-                for f in &*float_identifiers {
-                    if let MatchingRule::Simple(f) = f {
-                        if f.id.eq(id) {
+                for i in &*ignore_identifiers {
+                    if let MatchingRule::Simple(i) = i {
+                        if i.id.eq(id) {
                             should_push = false;
                         }
                     }
                 }
 
                 if should_push {
-                    float_identifiers.push(MatchingRule::Simple(IdWithIdentifier {
+                    ignore_identifiers.push(MatchingRule::Simple(IdWithIdentifier {
                         kind: identifier,
                         id: id.clone(),
                         matching_strategy: Option::from(MatchingStrategy::Legacy),
@@ -505,7 +602,8 @@ impl WindowManager {
                 self.move_container_to_workspace(workspace_idx, true, None)?;
             }
             SocketMessage::MoveContainerToMonitorNumber(monitor_idx) => {
-                self.move_container_to_monitor(monitor_idx, None, true)?;
+                let direction = self.direction_from_monitor_idx(monitor_idx);
+                self.move_container_to_monitor(monitor_idx, None, true, direction)?;
             }
             SocketMessage::SwapWorkspacesToMonitorNumber(monitor_idx) => {
                 self.swap_focused_monitor(monitor_idx)?;
@@ -517,7 +615,8 @@ impl WindowManager {
                         .ok_or_else(|| anyhow!("there must be at least one monitor"))?,
                 );
 
-                self.move_container_to_monitor(monitor_idx, None, true)?;
+                let direction = self.direction_from_monitor_idx(monitor_idx);
+                self.move_container_to_monitor(monitor_idx, None, true, direction)?;
             }
             SocketMessage::SendContainerToWorkspaceNumber(workspace_idx) => {
                 self.move_container_to_workspace(workspace_idx, false, None)?;
@@ -539,7 +638,8 @@ impl WindowManager {
                 self.move_container_to_workspace(workspace_idx, false, None)?;
             }
             SocketMessage::SendContainerToMonitorNumber(monitor_idx) => {
-                self.move_container_to_monitor(monitor_idx, None, false)?;
+                let direction = self.direction_from_monitor_idx(monitor_idx);
+                self.move_container_to_monitor(monitor_idx, None, false, direction)?;
             }
             SocketMessage::CycleSendContainerToMonitor(direction) => {
                 let monitor_idx = direction.next_idx(
@@ -548,22 +648,37 @@ impl WindowManager {
                         .ok_or_else(|| anyhow!("there must be at least one monitor"))?,
                 );
 
-                self.move_container_to_monitor(monitor_idx, None, false)?;
+                let direction = self.direction_from_monitor_idx(monitor_idx);
+                self.move_container_to_monitor(monitor_idx, None, false, direction)?;
             }
             SocketMessage::SendContainerToMonitorWorkspaceNumber(monitor_idx, workspace_idx) => {
-                self.move_container_to_monitor(monitor_idx, Option::from(workspace_idx), false)?;
+                let direction = self.direction_from_monitor_idx(monitor_idx);
+                self.move_container_to_monitor(
+                    monitor_idx,
+                    Option::from(workspace_idx),
+                    false,
+                    direction,
+                )?;
             }
             SocketMessage::MoveContainerToMonitorWorkspaceNumber(monitor_idx, workspace_idx) => {
-                self.move_container_to_monitor(monitor_idx, Option::from(workspace_idx), true)?;
+                let direction = self.direction_from_monitor_idx(monitor_idx);
+                self.move_container_to_monitor(
+                    monitor_idx,
+                    Option::from(workspace_idx),
+                    true,
+                    direction,
+                )?;
             }
             SocketMessage::SendContainerToNamedWorkspace(ref workspace) => {
                 if let Some((monitor_idx, workspace_idx)) =
                     self.monitor_workspace_index_by_name(workspace)
                 {
+                    let direction = self.direction_from_monitor_idx(monitor_idx);
                     self.move_container_to_monitor(
                         monitor_idx,
                         Option::from(workspace_idx),
                         false,
+                        direction,
                     )?;
                 }
             }
@@ -571,7 +686,13 @@ impl WindowManager {
                 if let Some((monitor_idx, workspace_idx)) =
                     self.monitor_workspace_index_by_name(workspace)
                 {
-                    self.move_container_to_monitor(monitor_idx, Option::from(workspace_idx), true)?;
+                    let direction = self.direction_from_monitor_idx(monitor_idx);
+                    self.move_container_to_monitor(
+                        monitor_idx,
+                        Option::from(workspace_idx),
+                        true,
+                        direction,
+                    )?;
                 }
             }
 
@@ -614,10 +735,18 @@ impl WindowManager {
                 self.focus_monitor(monitor_idx)?;
                 self.update_focused_workspace(self.mouse_follows_focus, true)?;
             }
+            SocketMessage::FocusMonitorAtCursor => {
+                if let Some(monitor_idx) = self.monitor_idx_from_current_pos() {
+                    self.focus_monitor(monitor_idx)?;
+                }
+            }
             SocketMessage::Retile => {
-                border_manager::BORDER_TEMPORARILY_DISABLED.store(false, Ordering::SeqCst);
                 border_manager::destroy_all_borders()?;
                 self.retile_all(false)?
+            }
+            SocketMessage::RetileWithResizeDimensions => {
+                border_manager::destroy_all_borders()?;
+                self.retile_all(true)?
             }
             SocketMessage::FlipLayout(layout_flip) => self.flip_layout(layout_flip)?,
             SocketMessage::ChangeLayout(layout) => self.change_workspace_layout_default(layout)?,
@@ -724,7 +853,15 @@ impl WindowManager {
                 // secondary monitor where the cursor is focused will be used as the target for
                 // the workspace switch op
                 if let Some(monitor_idx) = self.monitor_idx_from_current_pos() {
-                    self.focus_monitor(monitor_idx)?;
+                    if monitor_idx != self.focused_monitor_idx() {
+                        if let Some(monitor) = self.monitors().get(monitor_idx) {
+                            if let Some(workspace) = monitor.focused_workspace() {
+                                if workspace.is_empty() {
+                                    self.focus_monitor(monitor_idx)?;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 let focused_monitor = self
@@ -742,12 +879,64 @@ impl WindowManager {
 
                 self.focus_workspace(workspace_idx)?;
             }
+            SocketMessage::CloseWorkspace => {
+                // This is to ensure that even on an empty workspace on a secondary monitor, the
+                // secondary monitor where the cursor is focused will be used as the target for
+                // the workspace switch op
+                if let Some(monitor_idx) = self.monitor_idx_from_current_pos() {
+                    if monitor_idx != self.focused_monitor_idx() {
+                        if let Some(monitor) = self.monitors().get(monitor_idx) {
+                            if let Some(workspace) = monitor.focused_workspace() {
+                                if workspace.is_empty() {
+                                    self.focus_monitor(monitor_idx)?;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let mut can_close = false;
+
+                if let Some(monitor) = self.focused_monitor_mut() {
+                    let focused_workspace_idx = monitor.focused_workspace_idx();
+                    let next_focused_workspace_idx = focused_workspace_idx.saturating_sub(1);
+
+                    if let Some(workspace) = monitor.focused_workspace() {
+                        if monitor.workspaces().len() > 1
+                            && workspace.containers().is_empty()
+                            && workspace.floating_windows().is_empty()
+                            && workspace.monocle_container().is_none()
+                            && workspace.maximized_window().is_none()
+                            && workspace.name().is_none()
+                        {
+                            can_close = true;
+                        }
+                    }
+
+                    if can_close
+                        && monitor
+                            .workspaces_mut()
+                            .remove(focused_workspace_idx)
+                            .is_some()
+                    {
+                        self.focus_workspace(next_focused_workspace_idx)?;
+                    }
+                }
+            }
             SocketMessage::FocusLastWorkspace => {
                 // This is to ensure that even on an empty workspace on a secondary monitor, the
                 // secondary monitor where the cursor is focused will be used as the target for
                 // the workspace switch op
                 if let Some(monitor_idx) = self.monitor_idx_from_current_pos() {
-                    self.focus_monitor(monitor_idx)?;
+                    if monitor_idx != self.focused_monitor_idx() {
+                        if let Some(monitor) = self.monitors().get(monitor_idx) {
+                            if let Some(workspace) = monitor.focused_workspace() {
+                                if workspace.is_empty() {
+                                    self.focus_monitor(monitor_idx)?;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 let idx = self
@@ -770,7 +959,15 @@ impl WindowManager {
                 // secondary monitor where the cursor is focused will be used as the target for
                 // the workspace switch op
                 if let Some(monitor_idx) = self.monitor_idx_from_current_pos() {
-                    self.focus_monitor(monitor_idx)?;
+                    if monitor_idx != self.focused_monitor_idx() {
+                        if let Some(monitor) = self.monitors().get(monitor_idx) {
+                            if let Some(workspace) = monitor.focused_workspace() {
+                                if workspace.is_empty() {
+                                    self.focus_monitor(monitor_idx)?;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if self.focused_workspace_idx().unwrap_or_default() != workspace_idx {
@@ -782,7 +979,15 @@ impl WindowManager {
                 // secondary monitor where the cursor is focused will be used as the target for
                 // the workspace switch op
                 if let Some(monitor_idx) = self.monitor_idx_from_current_pos() {
-                    self.focus_monitor(monitor_idx)?;
+                    if monitor_idx != self.focused_monitor_idx() {
+                        if let Some(monitor) = self.monitors().get(monitor_idx) {
+                            if let Some(workspace) = monitor.focused_workspace() {
+                                if workspace.is_empty() {
+                                    self.focus_monitor(monitor_idx)?;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 let focused_monitor_idx = self.focused_monitor_idx();
@@ -816,26 +1021,10 @@ impl WindowManager {
                 }
             }
             SocketMessage::Stop => {
-                tracing::info!(
-                    "received stop command, restoring all hidden windows and terminating process"
-                );
-                self.restore_all_windows()?;
-
-                if WindowsApi::focus_follows_mouse()? {
-                    WindowsApi::disable_focus_follows_mouse()?;
-                }
-
-                let sockets = SUBSCRIPTION_SOCKETS.lock();
-                for path in (*sockets).values() {
-                    if let Ok(stream) = UnixStream::connect(path) {
-                        stream.shutdown(Shutdown::Both)?;
-                    }
-                }
-
-                let socket = DATA_DIR.join("komorebi.sock");
-                let _ = std::fs::remove_file(socket);
-
-                std::process::exit(0)
+                self.stop(false)?;
+            }
+            SocketMessage::StopIgnoreRestore => {
+                self.stop(true)?;
             }
             SocketMessage::MonitorIndexPreference(index_preference, left, top, right, bottom) => {
                 let mut monitor_index_preferences = MONITOR_INDEX_PREFERENCES.lock();
@@ -908,9 +1097,9 @@ impl WindowManager {
                 reply.write_all(visible_windows_state.as_bytes())?;
             }
             SocketMessage::MonitorInformation => {
-                let mut monitors = HashMap::new();
+                let mut monitors = vec![];
                 for monitor in self.monitors() {
-                    monitors.insert(monitor.device_id(), monitor.size());
+                    monitors.push(MonitorInformation::from(monitor));
                 }
 
                 let monitors_state = serde_json::to_string_pretty(&monitors)
@@ -920,19 +1109,29 @@ impl WindowManager {
             }
             SocketMessage::Query(query) => {
                 let response = match query {
-                    StateQuery::FocusedMonitorIndex => self.focused_monitor_idx(),
+                    StateQuery::FocusedMonitorIndex => self.focused_monitor_idx().to_string(),
                     StateQuery::FocusedWorkspaceIndex => self
                         .focused_monitor()
                         .ok_or_else(|| anyhow!("there is no monitor"))?
-                        .focused_workspace_idx(),
-                    StateQuery::FocusedContainerIndex => {
-                        self.focused_workspace()?.focused_container_idx()
-                    }
+                        .focused_workspace_idx()
+                        .to_string(),
+                    StateQuery::FocusedContainerIndex => self
+                        .focused_workspace()?
+                        .focused_container_idx()
+                        .to_string(),
                     StateQuery::FocusedWindowIndex => {
-                        self.focused_container()?.focused_window_idx()
+                        self.focused_container()?.focused_window_idx().to_string()
                     }
-                }
-                .to_string();
+                    StateQuery::FocusedWorkspaceName => {
+                        let focused_monitor = self
+                            .focused_monitor()
+                            .ok_or_else(|| anyhow!("there is no monitor"))?;
+
+                        focused_monitor
+                            .focused_workspace_name()
+                            .unwrap_or_else(|| focused_monitor.focused_workspace_idx().to_string())
+                    }
+                };
 
                 reply.write_all(response.as_bytes())?;
             }
@@ -1150,7 +1349,7 @@ impl WindowManager {
                     // Pause so that restored windows come to the foreground from all workspaces
                     self.is_paused = true;
                     // Bring all windows to the foreground
-                    self.restore_all_windows()?;
+                    self.restore_all_windows(false)?;
 
                     // Create a new wm from the config path
                     let mut wm = StaticConfig::preload(
@@ -1161,6 +1360,8 @@ impl WindowManager {
 
                     // Initialize the new wm
                     wm.init()?;
+
+                    wm.restore_all_windows(true)?;
 
                     // This is equivalent to StaticConfig::postload for this use case
                     StaticConfig::reload(config, &mut wm)?;
@@ -1312,6 +1513,14 @@ impl WindowManager {
                 let socket_path = DATA_DIR.join(socket);
                 sockets.insert(socket.clone(), socket_path);
             }
+            SocketMessage::AddSubscriberSocketWithOptions(ref socket, options) => {
+                let mut sockets = SUBSCRIPTION_SOCKETS.lock();
+                let socket_path = DATA_DIR.join(socket);
+                sockets.insert(socket.clone(), socket_path);
+
+                let mut socket_options = SUBSCRIPTION_SOCKET_OPTIONS.lock();
+                socket_options.insert(socket.clone(), options);
+            }
             SocketMessage::RemoveSubscriberSocket(ref socket) => {
                 let mut sockets = SUBSCRIPTION_SOCKETS.lock();
                 sockets.remove(socket);
@@ -1339,14 +1548,51 @@ impl WindowManager {
                 self.resize_delta = delta;
             }
             SocketMessage::ToggleWindowContainerBehaviour => {
-                match self.window_container_behaviour {
+                match self.window_management_behaviour.current_behaviour {
                     WindowContainerBehaviour::Create => {
-                        self.window_container_behaviour = WindowContainerBehaviour::Append;
+                        self.window_management_behaviour.current_behaviour =
+                            WindowContainerBehaviour::Append;
                     }
                     WindowContainerBehaviour::Append => {
-                        self.window_container_behaviour = WindowContainerBehaviour::Create;
+                        self.window_management_behaviour.current_behaviour =
+                            WindowContainerBehaviour::Create;
                     }
                 }
+            }
+            SocketMessage::ToggleFloatOverride => {
+                self.window_management_behaviour.float_override =
+                    !self.window_management_behaviour.float_override;
+            }
+            SocketMessage::ToggleWorkspaceWindowContainerBehaviour => {
+                let current_global_behaviour = self.window_management_behaviour.current_behaviour;
+                if let Some(behaviour) = self
+                    .focused_workspace_mut()?
+                    .window_container_behaviour_mut()
+                {
+                    match behaviour {
+                        WindowContainerBehaviour::Create => {
+                            *behaviour = WindowContainerBehaviour::Append
+                        }
+                        WindowContainerBehaviour::Append => {
+                            *behaviour = WindowContainerBehaviour::Create
+                        }
+                    }
+                } else {
+                    self.focused_workspace_mut()?
+                        .set_window_container_behaviour(Some(match current_global_behaviour {
+                            WindowContainerBehaviour::Create => WindowContainerBehaviour::Append,
+                            WindowContainerBehaviour::Append => WindowContainerBehaviour::Create,
+                        }));
+                };
+            }
+            SocketMessage::ToggleWorkspaceFloatOverride => {
+                let current_global_override = self.window_management_behaviour.float_override;
+                if let Some(float_override) = self.focused_workspace_mut()?.float_override_mut() {
+                    *float_override = !*float_override;
+                } else {
+                    self.focused_workspace_mut()?
+                        .set_float_override(Some(!current_global_override));
+                };
             }
             SocketMessage::WindowHidingBehaviour(behaviour) => {
                 let mut hiding_behaviour = HIDING_BEHAVIOUR.lock();
@@ -1371,6 +1617,16 @@ impl WindowManager {
             }
             SocketMessage::Border(enable) => {
                 border_manager::BORDER_ENABLED.store(enable, Ordering::SeqCst);
+                if !enable {
+                    match IMPLEMENTATION.load() {
+                        BorderImplementation::Komorebi => {
+                            border_manager::destroy_all_borders()?;
+                        }
+                        BorderImplementation::Windows => {
+                            self.remove_all_accents()?;
+                        }
+                    }
+                }
             }
             SocketMessage::BorderImplementation(implementation) => {
                 if !*WINDOWS_11 && matches!(implementation, BorderImplementation::Windows) {
@@ -1388,7 +1644,7 @@ impl WindowManager {
                         }
                     }
 
-                    border_manager::send_notification();
+                    border_manager::send_notification(None);
                 }
             }
             SocketMessage::BorderColour(kind, r, g, b) => match kind {
@@ -1404,6 +1660,9 @@ impl WindowManager {
                 WindowKind::Unfocused => {
                     border_manager::UNFOCUSED.store(Rgb::new(r, g, b).into(), Ordering::SeqCst);
                 }
+                WindowKind::Floating => {
+                    border_manager::FLOATING.store(Rgb::new(r, g, b).into(), Ordering::SeqCst);
+                }
             },
             SocketMessage::BorderStyle(style) => {
                 STYLE.store(style);
@@ -1414,18 +1673,41 @@ impl WindowManager {
             SocketMessage::BorderOffset(offset) => {
                 border_manager::BORDER_OFFSET.store(offset, Ordering::SeqCst);
             }
-            SocketMessage::Animation(enable) => {
-                ANIMATION_ENABLED.store(enable, Ordering::SeqCst);
-            }
-            SocketMessage::AnimationDuration(duration) => {
-                ANIMATION_DURATION.store(duration, Ordering::SeqCst);
-            }
+            SocketMessage::Animation(enable, prefix) => match prefix {
+                Some(prefix) => {
+                    ANIMATION_ENABLED_PER_ANIMATION
+                        .lock()
+                        .insert(prefix, enable);
+                }
+                None => {
+                    ANIMATION_ENABLED_GLOBAL.store(enable, Ordering::SeqCst);
+                    ANIMATION_ENABLED_PER_ANIMATION.lock().clear();
+                }
+            },
+            SocketMessage::AnimationDuration(duration, prefix) => match prefix {
+                Some(prefix) => {
+                    ANIMATION_DURATION_PER_ANIMATION
+                        .lock()
+                        .insert(prefix, duration);
+                }
+                None => {
+                    ANIMATION_DURATION_GLOBAL.store(duration, Ordering::SeqCst);
+                    ANIMATION_DURATION_PER_ANIMATION.lock().clear();
+                }
+            },
             SocketMessage::AnimationFps(fps) => {
                 ANIMATION_FPS.store(fps, Ordering::SeqCst);
             }
-            SocketMessage::AnimationStyle(style) => {
-                *ANIMATION_STYLE.lock() = style;
-            }
+            SocketMessage::AnimationStyle(style, prefix) => match prefix {
+                Some(prefix) => {
+                    ANIMATION_STYLE_PER_ANIMATION.lock().insert(prefix, style);
+                }
+                None => {
+                    let mut animation_style = ANIMATION_STYLE_GLOBAL.lock();
+                    *animation_style = style;
+                    ANIMATION_STYLE_PER_ANIMATION.lock().clear();
+                }
+            },
             SocketMessage::ToggleTransparency => {
                 let current = transparency_manager::TRANSPARENCY_ENABLED.load(Ordering::SeqCst);
                 transparency_manager::TRANSPARENCY_ENABLED.store(!current, Ordering::SeqCst);
@@ -1438,6 +1720,7 @@ impl WindowManager {
             }
             SocketMessage::StackbarMode(mode) => {
                 STACKBAR_MODE.store(mode);
+                self.retile_all(true)?;
             }
             SocketMessage::StackbarLabel(label) => {
                 STACKBAR_LABEL.store(label);
@@ -1503,10 +1786,24 @@ impl WindowManager {
 
                 reply.write_all(config.as_bytes())?;
             }
-            SocketMessage::RemoveTitleBar(_, ref id) => {
+            SocketMessage::RemoveTitleBar(identifier, ref id) => {
                 let mut identifiers = NO_TITLEBAR.lock();
-                if !identifiers.contains(id) {
-                    identifiers.push(id.clone());
+
+                let mut should_push = true;
+                for i in &*identifiers {
+                    if let MatchingRule::Simple(i) = i {
+                        if i.id.eq(id) {
+                            should_push = false;
+                        }
+                    }
+                }
+
+                if should_push {
+                    identifiers.push(MatchingRule::Simple(IdWithIdentifier {
+                        kind: identifier,
+                        id: id.clone(),
+                        matching_strategy: Option::from(MatchingStrategy::Legacy),
+                    }));
                 }
             }
             SocketMessage::ToggleTitleBars => {
@@ -1522,18 +1819,23 @@ impl WindowManager {
 
                 reply.write_all(schema.as_bytes())?;
             }
+            SocketMessage::Theme(theme) => {
+                theme_manager::send_notification(theme);
+            }
             // Deprecated commands
             SocketMessage::AltFocusHack(_)
             | SocketMessage::IdentifyBorderOverflowApplication(_, _) => {}
         };
 
-        let notification = Notification {
-            event: NotificationEvent::Socket(message.clone()),
-            state: self.as_ref().into(),
-        };
+        notify_subscribers(
+            Notification {
+                event: NotificationEvent::Socket(message.clone()),
+                state: self.as_ref().into(),
+            },
+            initial_state.has_been_modified(self.as_ref()),
+        )?;
 
-        notify_subscribers(&serde_json::to_string(&notification)?)?;
-        border_manager::send_notification();
+        border_manager::send_notification(None);
         transparency_manager::send_notification();
         stackbar_manager::send_notification();
 
@@ -1551,22 +1853,29 @@ pub fn read_commands_uds(wm: &Arc<Mutex<WindowManager>>, mut stream: UnixStream)
     for line in reader.lines() {
         let message = SocketMessage::from_str(&line?)?;
 
-        let mut wm = wm.lock();
-
-        if wm.is_paused {
-            return match message {
-                SocketMessage::TogglePause
-                | SocketMessage::State
-                | SocketMessage::GlobalState
-                | SocketMessage::Stop => Ok(wm.process_command(message, &mut stream)?),
-                _ => {
-                    tracing::trace!("ignoring while paused");
-                    Ok(())
+        match wm.try_lock_for(Duration::from_secs(1)) {
+            None => {
+                tracing::warn!(
+                    "could not acquire window manager lock, not processing message: {message}"
+                );
+            }
+            Some(mut wm) => {
+                if wm.is_paused {
+                    return match message {
+                        SocketMessage::TogglePause
+                        | SocketMessage::State
+                        | SocketMessage::GlobalState
+                        | SocketMessage::Stop => Ok(wm.process_command(message, &mut stream)?),
+                        _ => {
+                            tracing::trace!("ignoring while paused");
+                            Ok(())
+                        }
+                    };
                 }
-            };
-        }
 
-        wm.process_command(message.clone(), &mut stream)?;
+                wm.process_command(message.clone(), &mut stream)?;
+            }
+        }
     }
 
     Ok(())

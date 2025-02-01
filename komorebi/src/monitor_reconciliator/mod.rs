@@ -5,13 +5,20 @@ use crate::core::Rect;
 use crate::monitor;
 use crate::monitor::Monitor;
 use crate::monitor_reconciliator::hidden::Hidden;
+use crate::notify_subscribers;
 use crate::MonitorConfig;
+use crate::Notification;
+use crate::NotificationEvent;
+use crate::State;
 use crate::WindowManager;
 use crate::WindowsApi;
 use crossbeam_channel::Receiver;
 use crossbeam_channel::Sender;
 use crossbeam_utils::atomic::AtomicConsume;
 use parking_lot::Mutex;
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -20,7 +27,9 @@ use std::sync::OnceLock;
 
 pub mod hidden;
 
-pub enum Notification {
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "content")]
+pub enum MonitorNotification {
     ResolutionScalingChanged,
     WorkAreaChanged,
     DisplayConnectionChange,
@@ -32,23 +41,24 @@ pub enum Notification {
 
 static ACTIVE: AtomicBool = AtomicBool::new(true);
 
-static CHANNEL: OnceLock<(Sender<Notification>, Receiver<Notification>)> = OnceLock::new();
+static CHANNEL: OnceLock<(Sender<MonitorNotification>, Receiver<MonitorNotification>)> =
+    OnceLock::new();
 
 static MONITOR_CACHE: OnceLock<Mutex<HashMap<String, MonitorConfig>>> = OnceLock::new();
 
-pub fn channel() -> &'static (Sender<Notification>, Receiver<Notification>) {
+pub fn channel() -> &'static (Sender<MonitorNotification>, Receiver<MonitorNotification>) {
     CHANNEL.get_or_init(|| crossbeam_channel::bounded(1))
 }
 
-fn event_tx() -> Sender<Notification> {
+fn event_tx() -> Sender<MonitorNotification> {
     channel().0.clone()
 }
 
-fn event_rx() -> Receiver<Notification> {
+fn event_rx() -> Receiver<MonitorNotification> {
     channel().1.clone()
 }
 
-pub fn send_notification(notification: Notification) {
+pub fn send_notification(notification: MonitorNotification) {
     if event_tx().try_send(notification).is_err() {
         tracing::warn!("channel is full; dropping notification")
     }
@@ -89,10 +99,12 @@ pub fn attached_display_devices() -> color_eyre::Result<Vec<Monitor>> {
                 name,
                 device,
                 device_id,
+                display.serial_number_id,
             )
         })
         .collect::<Vec<_>>())
 }
+
 pub fn listen_for_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result<()> {
     #[allow(clippy::expect_used)]
     Hidden::create("komorebi-hidden")?;
@@ -116,6 +128,7 @@ pub fn listen_for_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Re
 
     Ok(())
 }
+
 pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result<()> {
     tracing::info!("listening");
 
@@ -125,13 +138,15 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
         if !ACTIVE.load_consume() {
             if matches!(
                 notification,
-                Notification::ResumingFromSuspendedState | Notification::SessionUnlocked
+                MonitorNotification::ResumingFromSuspendedState
+                    | MonitorNotification::SessionUnlocked
             ) {
                 tracing::debug!(
                     "reactivating reconciliator - system has resumed from suspended state or session has been unlocked"
                 );
 
                 ACTIVE.store(true, Ordering::SeqCst);
+                border_manager::send_notification(None);
             }
 
             continue 'receiver;
@@ -139,17 +154,20 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
 
         let mut wm = wm.lock();
 
+        let initial_state = State::from(wm.as_ref());
+
         match notification {
-            Notification::EnteringSuspendedState | Notification::SessionLocked => {
+            MonitorNotification::EnteringSuspendedState | MonitorNotification::SessionLocked => {
                 tracing::debug!(
                     "deactivating reconciliator until system resumes from suspended state or session is unlocked"
                 );
                 ACTIVE.store(false, Ordering::SeqCst);
             }
-            Notification::ResumingFromSuspendedState | Notification::SessionUnlocked => {
+            MonitorNotification::ResumingFromSuspendedState
+            | MonitorNotification::SessionUnlocked => {
                 // this is only handled above if the reconciliator is paused
             }
-            Notification::WorkAreaChanged => {
+            MonitorNotification::WorkAreaChanged => {
                 tracing::debug!("handling work area changed notification");
                 let offset = wm.work_area_offset;
                 for monitor in wm.monitors_mut() {
@@ -172,7 +190,7 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
                     if should_update {
                         tracing::info!("updated work area for {}", monitor.device_id());
                         monitor.update_focused_workspace(offset)?;
-                        border_manager::send_notification();
+                        border_manager::send_notification(None);
                     } else {
                         tracing::debug!(
                             "work areas match, reconciliation not required for {}",
@@ -181,7 +199,7 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
                     }
                 }
             }
-            Notification::ResolutionScalingChanged => {
+            MonitorNotification::ResolutionScalingChanged => {
                 tracing::debug!("handling resolution/scaling changed notification");
                 let offset = wm.work_area_offset;
                 for monitor in wm.monitors_mut() {
@@ -219,7 +237,7 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
                         );
 
                         monitor.update_focused_workspace(offset)?;
-                        border_manager::send_notification();
+                        border_manager::send_notification(None);
                     } else {
                         tracing::debug!(
                             "resolutions match, reconciliation not required for {}",
@@ -228,7 +246,7 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
                     }
                 }
             }
-            Notification::DisplayConnectionChange => {
+            MonitorNotification::DisplayConnectionChange => {
                 tracing::debug!("handling display connection change notification");
                 let mut monitor_cache = MONITOR_CACHE
                     .get_or_init(|| Mutex::new(HashMap::new()))
@@ -406,10 +424,18 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
                     // Second retile to fix DPI/resolution related jank
                     wm.retile_all(true)?;
                     // Border updates to fix DPI/resolution related jank
-                    border_manager::send_notification();
+                    border_manager::send_notification(None);
                 }
             }
         }
+
+        notify_subscribers(
+            Notification {
+                event: NotificationEvent::Monitor(notification),
+                state: wm.as_ref().into(),
+            },
+            initial_state.has_been_modified(&wm),
+        )?;
     }
 
     Ok(())

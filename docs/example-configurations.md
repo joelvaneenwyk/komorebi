@@ -62,7 +62,7 @@ using `default_workspace_padding` and `default_container_padding`.
 
 You may have seen videos and screenshots of people using `komorebi` with a
 thick, colourful active window border. You can also enable this by setting
-`active_window_border` to `true`. However, please be warned that this feature
+`border` to `true`. However, please be warned that this feature
 is a crude hack trying to compensate for the insistence of Microsoft Windows
 design teams to make custom borders with widths that are actually visible to
 the user a thing of the past and removing this capability from the Win32 API.
@@ -162,6 +162,8 @@ If you have an ultrawide monitor, I recommend using this layout.
 
 If you like the `grid` layout in [LeftWM](https://github.com/leftwm/leftwm-layouts) this is almost exactly the same!
 
+The `grid` layout does not support resizing windows tiles.
+
 ```
 +-----+-----+   +---+---+---+   +---+---+---+   +---+---+---+
 |     |     |   |   |   |   |   |   |   |   |   |   |   |   |
@@ -177,15 +179,34 @@ If you like the `grid` layout in [LeftWM](https://github.com/leftwm/leftwm-layou
 
 `whkd` is a fairly basic piece of software with a simple configuration format:
 key bindings go to the left of the colon, and shell commands go to the right of the
-colon. By default, the `whkdrc` file should be located in the `$Env:USERPROFILE/.config/` directory.
+colon.
 
-Please remember that `whkd` does not support overriding Microsoft's limitations
-on hotkey bindings that include the `Windows` key. If this is important to you,
-I recommend using [AutoHotKey](https://autohotkey.com) to set up your key
-bindings for `komorebic` commands instead.
+As of [`v0.2.4`](https://github.com/LGUG2Z/whkd/releases/tag/v0.2.4), `whkd` can override most of Microsoft's
+limitations on hotkey bindings that include the `win` key. However, you will still need
+to [modify the registry](https://superuser.com/questions/1059511/how-to-disable-winl-in-windows-10) to prevent
+`win + l` from locking the operating system.
 
 ```
 {% include "./whkdrc.sample" %}
+```
+
+### Configuration
+
+`whkd` searches for a `whkdrc` configuration file in the following locations:
+
+* `$Env:WHKD_CONFIG_HOME`
+* `$Env:USERPROFILE/.config`
+
+It is also possible to change a hotkey behavior depending on which application has focus:
+
+```
+alt + n [
+    # ProcessName as shown by `Get-Process`
+    Firefox       : echo "hello firefox"
+
+    # Spaces are fine, no quotes required
+    Google Chrome : echo "hello chrome"
+]
 ```
 
 ### Setting .shell

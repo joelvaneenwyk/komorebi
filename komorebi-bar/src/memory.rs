@@ -1,12 +1,12 @@
+use crate::config::LabelPrefix;
+use crate::render::RenderConfig;
+use crate::selected_frame::SelectableFrame;
 use crate::widget::BarWidget;
-use crate::WIDGET_SPACING;
 use eframe::egui::text::LayoutJob;
+use eframe::egui::Align;
 use eframe::egui::Context;
-use eframe::egui::FontId;
 use eframe::egui::Label;
-use eframe::egui::Sense;
 use eframe::egui::TextFormat;
-use eframe::egui::TextStyle;
 use eframe::egui::Ui;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -23,20 +23,24 @@ pub struct MemoryConfig {
     pub enable: bool,
     /// Data refresh interval (default: 10 seconds)
     pub data_refresh_interval: Option<u64>,
+    /// Display label prefix
+    pub label_prefix: Option<LabelPrefix>,
 }
 
 impl From<MemoryConfig> for Memory {
     fn from(value: MemoryConfig) -> Self {
-        let mut system =
-            System::new_with_specifics(RefreshKind::default().without_cpu().without_processes());
-
-        system.refresh_memory();
+        let data_refresh_interval = value.data_refresh_interval.unwrap_or(10);
 
         Self {
             enable: value.enable,
-            system,
-            data_refresh_interval: value.data_refresh_interval.unwrap_or(10),
-            last_updated: Instant::now(),
+            system: System::new_with_specifics(
+                RefreshKind::default().without_cpu().without_processes(),
+            ),
+            data_refresh_interval,
+            label_prefix: value.label_prefix.unwrap_or(LabelPrefix::IconAndText),
+            last_updated: Instant::now()
+                .checked_sub(Duration::from_secs(data_refresh_interval))
+                .unwrap(),
         }
     }
 }
@@ -45,6 +49,7 @@ pub struct Memory {
     pub enable: bool,
     system: System,
     data_refresh_interval: u64,
+    label_prefix: LabelPrefix,
     last_updated: Instant,
 }
 
@@ -58,25 +63,28 @@ impl Memory {
 
         let used = self.system.used_memory();
         let total = self.system.total_memory();
-        format!("RAM: {}%", (used * 100) / total)
+        match self.label_prefix {
+            LabelPrefix::Text | LabelPrefix::IconAndText => {
+                format!("RAM: {}%", (used * 100) / total)
+            }
+            LabelPrefix::None | LabelPrefix::Icon => format!("{}%", (used * 100) / total),
+        }
     }
 }
 
 impl BarWidget for Memory {
-    fn render(&mut self, ctx: &Context, ui: &mut Ui) {
+    fn render(&mut self, ctx: &Context, ui: &mut Ui, config: &mut RenderConfig) {
         if self.enable {
             let output = self.output();
             if !output.is_empty() {
-                let font_id = ctx
-                    .style()
-                    .text_styles
-                    .get(&TextStyle::Body)
-                    .cloned()
-                    .unwrap_or_else(FontId::default);
-
                 let mut layout_job = LayoutJob::simple(
-                    egui_phosphor::regular::MEMORY.to_string(),
-                    font_id.clone(),
+                    match self.label_prefix {
+                        LabelPrefix::Icon | LabelPrefix::IconAndText => {
+                            egui_phosphor::regular::MEMORY.to_string()
+                        }
+                        LabelPrefix::None | LabelPrefix::Text => String::new(),
+                    },
+                    config.icon_font_id.clone(),
                     ctx.style().visuals.selection.stroke.color,
                     100.0,
                 );
@@ -84,25 +92,27 @@ impl BarWidget for Memory {
                 layout_job.append(
                     &output,
                     10.0,
-                    TextFormat::simple(font_id, ctx.style().visuals.text_color()),
+                    TextFormat {
+                        font_id: config.text_font_id.clone(),
+                        color: ctx.style().visuals.text_color(),
+                        valign: Align::Center,
+                        ..Default::default()
+                    },
                 );
 
-                if ui
-                    .add(
-                        Label::new(layout_job)
-                            .selectable(false)
-                            .sense(Sense::click()),
-                    )
-                    .clicked()
-                {
-                    if let Err(error) = Command::new("cmd.exe").args(["/C", "taskmgr.exe"]).spawn()
+                config.apply_on_widget(false, ui, |ui| {
+                    if SelectableFrame::new(false)
+                        .show(ui, |ui| ui.add(Label::new(layout_job).selectable(false)))
+                        .clicked()
                     {
-                        eprintln!("{}", error)
+                        if let Err(error) =
+                            Command::new("cmd.exe").args(["/C", "taskmgr.exe"]).spawn()
+                        {
+                            eprintln!("{}", error)
+                        }
                     }
-                }
+                });
             }
-
-            ui.add_space(WIDGET_SPACING);
         }
     }
 }

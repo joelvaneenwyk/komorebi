@@ -14,6 +14,11 @@ Options:
           ease-out-quart, ease-in-out-quart, ease-in-quint, ease-out-quint, ease-in-out-quint, ease-in-expo, ease-out-expo, ease-in-out-expo, ease-in-circ, ease-out-circ, ease-in-out-circ,
           ease-in-back, ease-out-back, ease-in-out-back, ease-in-elastic, ease-out-elastic, ease-in-out-elastic, ease-in-bounce, ease-out-bounce, ease-in-out-bounce]
 
+  -a, --animation-type <ANIMATION_TYPE>
+          Animation type to apply the style to. If not specified, sets global style
+          
+          [possible values: movement, transparency]
+
   -h, --help
           Print help
 

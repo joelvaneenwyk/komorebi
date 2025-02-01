@@ -9,9 +9,6 @@ Options:
   -c, --config <CONFIG>
           Path to a static configuration JSON file
 
-  -f, --ffm
-          Enable komorebi's custom focus-follows-mouse implementation
-
       --whkd
           Enable autostart of whkd
 
@@ -20,6 +17,9 @@ Options:
 
       --bar
           Enable autostart of komorebi-bar
+
+      --masir
+          Enable autostart of masir
 
   -h, --help
           Print help

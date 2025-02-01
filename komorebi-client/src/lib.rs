@@ -1,6 +1,8 @@
 #![warn(clippy::all)]
 #![allow(clippy::missing_errors_doc)]
 
+pub use komorebi::animation::prefix::AnimationPrefix;
+pub use komorebi::asc::ApplicationSpecificConfiguration;
 pub use komorebi::colour::Colour;
 pub use komorebi::colour::Rgb;
 pub use komorebi::config_generation::ApplicationConfiguration;
@@ -23,6 +25,7 @@ pub use komorebi::core::Layout;
 pub use komorebi::core::MoveBehaviour;
 pub use komorebi::core::OperationBehaviour;
 pub use komorebi::core::OperationDirection;
+pub use komorebi::core::PathExt;
 pub use komorebi::core::Rect;
 pub use komorebi::core::Sizing;
 pub use komorebi::core::SocketMessage;
@@ -31,6 +34,7 @@ pub use komorebi::core::StackbarMode;
 pub use komorebi::core::StateQuery;
 pub use komorebi::core::WindowKind;
 pub use komorebi::monitor::Monitor;
+pub use komorebi::monitor_reconciliator::MonitorNotification;
 pub use komorebi::ring::Ring;
 pub use komorebi::window::Window;
 pub use komorebi::window_manager_event::WindowManagerEvent;
@@ -44,6 +48,7 @@ pub use komorebi::RuleDebug;
 pub use komorebi::StackbarConfig;
 pub use komorebi::State;
 pub use komorebi::StaticConfig;
+pub use komorebi::SubscribeOptions;
 pub use komorebi::TabsConfig;
 
 use komorebi::DATA_DIR;
@@ -52,6 +57,7 @@ use std::io::BufReader;
 use std::io::Read;
 use std::io::Write;
 use std::net::Shutdown;
+use std::time::Duration;
 pub use uds_windows::UnixListener;
 use uds_windows::UnixStream;
 
@@ -60,13 +66,30 @@ const KOMOREBI: &str = "komorebi.sock";
 pub fn send_message(message: &SocketMessage) -> std::io::Result<()> {
     let socket = DATA_DIR.join(KOMOREBI);
     let mut stream = UnixStream::connect(socket)?;
+    stream.set_write_timeout(Some(Duration::from_secs(1)))?;
     stream.write_all(serde_json::to_string(message)?.as_bytes())
+}
+
+pub fn send_batch(messages: impl IntoIterator<Item = SocketMessage>) -> std::io::Result<()> {
+    let socket = DATA_DIR.join(KOMOREBI);
+    let mut stream = UnixStream::connect(socket)?;
+    stream.set_write_timeout(Some(Duration::from_secs(1)))?;
+    let msgs = messages.into_iter().fold(String::new(), |mut s, m| {
+        if let Ok(m_str) = serde_json::to_string(&m) {
+            s.push_str(&m_str);
+            s.push('\n');
+        }
+        s
+    });
+    stream.write_all(msgs.as_bytes())
 }
 
 pub fn send_query(message: &SocketMessage) -> std::io::Result<String> {
     let socket = DATA_DIR.join(KOMOREBI);
 
     let mut stream = UnixStream::connect(socket)?;
+    stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(1)))?;
     stream.write_all(serde_json::to_string(message)?.as_bytes())?;
     stream.shutdown(Shutdown::Write)?;
 
@@ -93,6 +116,32 @@ pub fn subscribe(name: &str) -> std::io::Result<UnixListener> {
     let listener = UnixListener::bind(&socket)?;
 
     send_message(&SocketMessage::AddSubscriberSocket(name.to_string()))?;
+
+    Ok(listener)
+}
+
+pub fn subscribe_with_options(
+    name: &str,
+    options: SubscribeOptions,
+) -> std::io::Result<UnixListener> {
+    let socket = DATA_DIR.join(name);
+
+    match std::fs::remove_file(&socket) {
+        Ok(()) => {}
+        Err(error) => match error.kind() {
+            std::io::ErrorKind::NotFound => {}
+            _ => {
+                return Err(error);
+            }
+        },
+    };
+
+    let listener = UnixListener::bind(&socket)?;
+
+    send_message(&SocketMessage::AddSubscriberSocketWithOptions(
+        name.to_string(),
+        options,
+    ))?;
 
     Ok(listener)
 }

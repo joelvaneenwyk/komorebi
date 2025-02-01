@@ -7,6 +7,7 @@
     clippy::doc_markdown
 )]
 
+use std::env::temp_dir;
 use std::net::Shutdown;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -17,6 +18,9 @@ use std::time::Duration;
 use clap::Parser;
 use color_eyre::Result;
 use crossbeam_utils::Backoff;
+use komorebi::animation::AnimationEngine;
+use komorebi::animation::ANIMATION_ENABLED_GLOBAL;
+use komorebi::animation::ANIMATION_ENABLED_PER_ANIMATION;
 #[cfg(feature = "deadlock_detection")]
 use parking_lot::deadlock;
 use parking_lot::Mutex;
@@ -38,7 +42,9 @@ use komorebi::process_movement::listen_for_movements;
 use komorebi::reaper;
 use komorebi::stackbar_manager;
 use komorebi::static_config::StaticConfig;
+use komorebi::theme_manager;
 use komorebi::transparency_manager;
+use komorebi::window_manager::State;
 use komorebi::window_manager::WindowManager;
 use komorebi::windows_api::WindowsApi;
 use komorebi::winevent_listener;
@@ -152,6 +158,9 @@ struct Opts {
     /// Path to a static configuration JSON file
     #[clap(short, long)]
     config: Option<PathBuf>,
+    /// Do not attempt to auto-apply a dumped state temp file from a previously running instance of komorebi
+    #[clap(long)]
+    clean_state: bool,
 }
 
 #[tracing::instrument]
@@ -168,7 +177,7 @@ fn main() -> Result<()> {
     SESSION_ID.store(session_id, Ordering::SeqCst);
 
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes(ProcessesToUpdate::All);
+    system.refresh_processes(ProcessesToUpdate::All, true);
 
     let matched_procs: Vec<&Process> = system.processes_by_name("komorebi.exe".as_ref()).collect();
 
@@ -256,6 +265,13 @@ fn main() -> Result<()> {
         }
     }
 
+    let dumped_state = temp_dir().join("komorebi.state.json");
+
+    if !opts.clean_state && dumped_state.is_file() {
+        let state: State = serde_json::from_str(&std::fs::read_to_string(&dumped_state)?)?;
+        wm.lock().apply_state(state);
+    }
+
     wm.lock().retile_all(false)?;
 
     listen_for_events(wm.clone());
@@ -271,6 +287,7 @@ fn main() -> Result<()> {
     monitor_reconciliator::listen_for_notifications(wm.clone())?;
     reaper::watch_for_orphans(wm.clone());
     focus_manager::listen_for_notifications(wm.clone());
+    theme_manager::listen_for_notifications();
 
     let (ctrlc_sender, ctrlc_receiver) = crossbeam_channel::bounded(1);
     ctrlc::set_handler(move || {
@@ -285,7 +302,13 @@ fn main() -> Result<()> {
 
     tracing::error!("received ctrl-c, restoring all hidden windows and terminating process");
 
-    wm.lock().restore_all_windows()?;
+    let state = State::from(&*wm.lock());
+    std::fs::write(dumped_state, serde_json::to_string_pretty(&state)?)?;
+
+    ANIMATION_ENABLED_PER_ANIMATION.lock().clear();
+    ANIMATION_ENABLED_GLOBAL.store(false, Ordering::SeqCst);
+    wm.lock().restore_all_windows(false)?;
+    AnimationEngine::wait_for_all_animations();
 
     if WindowsApi::focus_follows_mouse()? {
         WindowsApi::disable_focus_follows_mouse()?;

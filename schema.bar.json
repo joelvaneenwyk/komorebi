@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "KomobarConfig",
-  "description": "The `komorebi.bar.json` configuration file reference for `v0.1.30`",
+  "description": "The `komorebi.bar.json` configuration file reference for `v0.1.34`",
   "type": "object",
   "required": [
     "left_widgets",
@@ -9,46 +9,8 @@
     "right_widgets"
   ],
   "properties": {
-    "font_family": {
-      "description": "Font family",
-      "type": "string"
-    },
-    "font_size": {
-      "description": "Font size (default: 12.5)",
-      "type": "number",
-      "format": "float"
-    },
-    "frame": {
-      "description": "Frame options (see: https://docs.rs/egui/latest/egui/containers/struct.Frame.html)",
-      "type": "object",
-      "required": [
-        "inner_margin"
-      ],
-      "properties": {
-        "inner_margin": {
-          "description": "Margin inside the painted frame",
-          "type": "object",
-          "required": [
-            "x",
-            "y"
-          ],
-          "properties": {
-            "x": {
-              "description": "X coordinate",
-              "type": "number",
-              "format": "float"
-            },
-            "y": {
-              "description": "Y coordinate",
-              "type": "number",
-              "format": "float"
-            }
-          }
-        }
-      }
-    },
-    "left_widgets": {
-      "description": "Left side widgets (ordered left-to-right)",
+    "center_widgets": {
+      "description": "Center widgets (ordered left-to-right)",
       "type": "array",
       "items": {
         "oneOf": [
@@ -73,6 +35,103 @@
                   "enable": {
                     "description": "Enable the Battery widget",
                     "type": "boolean"
+                  },
+                  "hide_on_full_charge": {
+                    "description": "Hide the widget if the battery is at full charge",
+                    "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Cpu"
+            ],
+            "properties": {
+              "Cpu": {
+                "type": "object",
+                "required": [
+                  "enable"
+                ],
+                "properties": {
+                  "data_refresh_interval": {
+                    "description": "Data refresh interval (default: 10 seconds)",
+                    "type": "integer",
+                    "format": "uint64",
+                    "minimum": 0.0
+                  },
+                  "enable": {
+                    "description": "Enable the Cpu widget",
+                    "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
                   }
                 }
               }
@@ -139,6 +198,71 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      {
+                        "description": "Custom format with modifiers",
+                        "type": "object",
+                        "required": [
+                          "CustomModifiers"
+                        ],
+                        "properties": {
+                          "CustomModifiers": {
+                            "description": "Custom format with additive modifiers for integer format specifiers",
+                            "type": "object",
+                            "required": [
+                              "format",
+                              "modifiers"
+                            ],
+                            "properties": {
+                              "format": {
+                                "description": "Custom format (https://docs.rs/chrono/latest/chrono/format/strftime/index.html)",
+                                "type": "string"
+                              },
+                              "modifiers": {
+                                "description": "Additive modifiers for integer format specifiers (e.g. { \"%U\": 1 } to increment the zero-indexed week number by 1)",
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "integer",
+                                  "format": "int32"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
                       }
                     ]
                   }
@@ -155,9 +279,6 @@
             "properties": {
               "Komorebi": {
                 "type": "object",
-                "required": [
-                  "workspaces"
-                ],
                 "properties": {
                   "configuration_switcher": {
                     "description": "Configure the Configuration Switcher widget",
@@ -184,16 +305,55 @@
                     "description": "Configure the Focused Window widget",
                     "type": "object",
                     "required": [
-                      "enable",
-                      "show_icon"
+                      "enable"
                     ],
                     "properties": {
+                      "display": {
+                        "description": "Display format of the currently focused window",
+                        "oneOf": [
+                          {
+                            "description": "Show only icon",
+                            "type": "string",
+                            "enum": [
+                              "Icon"
+                            ]
+                          },
+                          {
+                            "description": "Show only text",
+                            "type": "string",
+                            "enum": [
+                              "Text"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and text on the rest",
+                            "type": "string",
+                            "enum": [
+                              "TextAndIconOnSelected"
+                            ]
+                          },
+                          {
+                            "description": "Show both icon and text",
+                            "type": "string",
+                            "enum": [
+                              "IconAndText"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and icons on the rest",
+                            "type": "string",
+                            "enum": [
+                              "IconAndTextOnSelected"
+                            ]
+                          }
+                        ]
+                      },
                       "enable": {
                         "description": "Enable the Komorebi Focused Window widget",
                         "type": "boolean"
                       },
                       "show_icon": {
-                        "description": "Show the icon of the currently focused window",
+                        "description": "DEPRECATED: use 'display' instead (Show the icon of the currently focused window)",
                         "type": "boolean"
                       }
                     }
@@ -205,9 +365,82 @@
                       "enable"
                     ],
                     "properties": {
+                      "display": {
+                        "description": "Display format of the current layout",
+                        "oneOf": [
+                          {
+                            "description": "Show only icon",
+                            "type": "string",
+                            "enum": [
+                              "Icon"
+                            ]
+                          },
+                          {
+                            "description": "Show only text",
+                            "type": "string",
+                            "enum": [
+                              "Text"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and text on the rest",
+                            "type": "string",
+                            "enum": [
+                              "TextAndIconOnSelected"
+                            ]
+                          },
+                          {
+                            "description": "Show both icon and text",
+                            "type": "string",
+                            "enum": [
+                              "IconAndText"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and icons on the rest",
+                            "type": "string",
+                            "enum": [
+                              "IconAndTextOnSelected"
+                            ]
+                          }
+                        ]
+                      },
                       "enable": {
                         "description": "Enable the Komorebi Layout widget",
                         "type": "boolean"
+                      },
+                      "options": {
+                        "description": "List of layout options",
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "BSP",
+                                "Columns",
+                                "Rows",
+                                "VerticalStack",
+                                "HorizontalStack",
+                                "UltrawideVerticalStack",
+                                "Grid",
+                                "RightMainVerticalStack"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
                       }
                     }
                   },
@@ -219,6 +452,46 @@
                       "hide_empty_workspaces"
                     ],
                     "properties": {
+                      "display": {
+                        "description": "Display format of the workspace",
+                        "oneOf": [
+                          {
+                            "description": "Show only icon",
+                            "type": "string",
+                            "enum": [
+                              "Icon"
+                            ]
+                          },
+                          {
+                            "description": "Show only text",
+                            "type": "string",
+                            "enum": [
+                              "Text"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and text on the rest",
+                            "type": "string",
+                            "enum": [
+                              "TextAndIconOnSelected"
+                            ]
+                          },
+                          {
+                            "description": "Show both icon and text",
+                            "type": "string",
+                            "enum": [
+                              "IconAndText"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and icons on the rest",
+                            "type": "string",
+                            "enum": [
+                              "IconAndTextOnSelected"
+                            ]
+                          }
+                        ]
+                      },
                       "enable": {
                         "description": "Enable the Komorebi Workspaces widget",
                         "type": "boolean"
@@ -276,6 +549,39 @@
                   "enable": {
                     "description": "Enable the Memory widget",
                     "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
                   }
                 }
               }
@@ -306,11 +612,48 @@
                     "description": "Enable the Network widget",
                     "type": "boolean"
                   },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  },
                   "network_activity_fill_characters": {
                     "description": "Characters to reserve for network activity data",
                     "type": "integer",
                     "format": "uint",
                     "minimum": 0.0
+                  },
+                  "show_default_interface": {
+                    "description": "Show default interface",
+                    "type": "boolean"
                   },
                   "show_network_activity": {
                     "description": "Show network activity",
@@ -346,6 +689,39 @@
                   "enable": {
                     "description": "Enable the Storage widget",
                     "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
                   }
                 }
               }
@@ -380,10 +756,38 @@
                         ]
                       },
                       {
+                        "description": "Twelve-hour format (without seconds)",
+                        "type": "string",
+                        "enum": [
+                          "TwelveHourWithoutSeconds"
+                        ]
+                      },
+                      {
                         "description": "Twenty-four-hour format (with seconds)",
                         "type": "string",
                         "enum": [
                           "TwentyFourHour"
+                        ]
+                      },
+                      {
+                        "description": "Twenty-four-hour format (without seconds)",
+                        "type": "string",
+                        "enum": [
+                          "TwentyFourHourWithoutSeconds"
+                        ]
+                      },
+                      {
+                        "description": "Twenty-four-hour format displayed as a binary clock with circles (with seconds) (https://en.wikipedia.org/wiki/Binary_clock)",
+                        "type": "string",
+                        "enum": [
+                          "BinaryCircle"
+                        ]
+                      },
+                      {
+                        "description": "Twenty-four-hour format displayed as a binary clock with rectangles (with seconds) (https://en.wikipedia.org/wiki/Binary_clock)",
+                        "type": "string",
+                        "enum": [
+                          "BinaryRectangle"
                         ]
                       },
                       {
@@ -400,6 +804,99 @@
                         "additionalProperties": false
                       }
                     ]
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Update"
+            ],
+            "properties": {
+              "Update": {
+                "type": "object",
+                "required": [
+                  "enable"
+                ],
+                "properties": {
+                  "data_refresh_interval": {
+                    "description": "Data refresh interval (default: 12 hours)",
+                    "type": "integer",
+                    "format": "uint64",
+                    "minimum": 0.0
+                  },
+                  "enable": {
+                    "description": "Enable the Update widget",
+                    "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
                   }
                 }
               }
@@ -409,26 +906,1261 @@
         ]
       }
     },
-    "max_label_width": {
-      "description": "Max label width before text truncation (default: 400.0)",
+    "font_family": {
+      "description": "Font family",
+      "type": "string"
+    },
+    "font_size": {
+      "description": "Font size (default: 12.5)",
       "type": "number",
       "format": "float"
     },
-    "monitor": {
-      "description": "Monitor options",
+    "frame": {
+      "description": "Frame options (see: https://docs.rs/egui/latest/egui/containers/frame/struct.Frame.html)",
       "type": "object",
       "required": [
-        "index"
+        "inner_margin"
       ],
       "properties": {
-        "index": {
-          "description": "Komorebi monitor index of the monitor on which to render the bar",
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0.0
+        "inner_margin": {
+          "description": "Margin inside the painted frame",
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "description": "X coordinate",
+              "type": "number",
+              "format": "float"
+            },
+            "y": {
+              "description": "Y coordinate",
+              "type": "number",
+              "format": "float"
+            }
+          }
+        }
+      }
+    },
+    "grouping": {
+      "description": "Visual grouping for widgets",
+      "oneOf": [
+        {
+          "description": "No grouping is applied",
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "None"
+              ]
+            }
+          }
         },
-        "work_area_offset": {
-          "description": "Automatically apply a work area offset for this monitor to accommodate the bar",
+        {
+          "description": "Widgets are grouped as a whole",
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "Bar"
+              ]
+            },
+            "rounding": {
+              "description": "Rounding values for the 4 corners. Can be a single or 4 values.",
+              "anyOf": [
+                {
+                  "description": "All 4 corners are the same",
+                  "type": "number",
+                  "format": "float"
+                },
+                {
+                  "description": "All 4 corners are custom. Order: NW, NE, SW, SE",
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "format": "float"
+                  },
+                  "maxItems": 4,
+                  "minItems": 4
+                }
+              ]
+            },
+            "style": {
+              "description": "Styles for the grouping",
+              "oneOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "Default"
+                  ]
+                },
+                {
+                  "description": "A shadow is added under the default group. (blur: 4, offset: x-1 y-1, spread: 3)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithShadowB4O1S3"
+                  ]
+                },
+                {
+                  "description": "A shadow is added under the default group. (blur: 4, offset: x-0 y-0, spread: 3)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithShadowB4O0S3"
+                  ]
+                },
+                {
+                  "description": "A shadow is added under the default group. (blur: 0, offset: x-1 y-1, spread: 3)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithShadowB0O1S3"
+                  ]
+                },
+                {
+                  "description": "A glow is added under the default group. (blur: 3, offset: x-1 y-1, spread: 2)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithGlowB3O1S2"
+                  ]
+                },
+                {
+                  "description": "A glow is added under the default group. (blur: 3, offset: x-0 y-0, spread: 2)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithGlowB3O0S2"
+                  ]
+                },
+                {
+                  "description": "A glow is added under the default group. (blur: 0, offset: x-1 y-1, spread: 2)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithGlowB0O1S2"
+                  ]
+                }
+              ]
+            },
+            "transparency_alpha": {
+              "description": "Alpha value for the color transparency [[0-255]] (default: 200)",
+              "type": "integer",
+              "format": "uint8",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "description": "Widgets are grouped by alignment",
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "Alignment"
+              ]
+            },
+            "rounding": {
+              "description": "Rounding values for the 4 corners. Can be a single or 4 values.",
+              "anyOf": [
+                {
+                  "description": "All 4 corners are the same",
+                  "type": "number",
+                  "format": "float"
+                },
+                {
+                  "description": "All 4 corners are custom. Order: NW, NE, SW, SE",
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "format": "float"
+                  },
+                  "maxItems": 4,
+                  "minItems": 4
+                }
+              ]
+            },
+            "style": {
+              "description": "Styles for the grouping",
+              "oneOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "Default"
+                  ]
+                },
+                {
+                  "description": "A shadow is added under the default group. (blur: 4, offset: x-1 y-1, spread: 3)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithShadowB4O1S3"
+                  ]
+                },
+                {
+                  "description": "A shadow is added under the default group. (blur: 4, offset: x-0 y-0, spread: 3)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithShadowB4O0S3"
+                  ]
+                },
+                {
+                  "description": "A shadow is added under the default group. (blur: 0, offset: x-1 y-1, spread: 3)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithShadowB0O1S3"
+                  ]
+                },
+                {
+                  "description": "A glow is added under the default group. (blur: 3, offset: x-1 y-1, spread: 2)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithGlowB3O1S2"
+                  ]
+                },
+                {
+                  "description": "A glow is added under the default group. (blur: 3, offset: x-0 y-0, spread: 2)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithGlowB3O0S2"
+                  ]
+                },
+                {
+                  "description": "A glow is added under the default group. (blur: 0, offset: x-1 y-1, spread: 2)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithGlowB0O1S2"
+                  ]
+                }
+              ]
+            },
+            "transparency_alpha": {
+              "description": "Alpha value for the color transparency [[0-255]] (default: 200)",
+              "type": "integer",
+              "format": "uint8",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "description": "Widgets are grouped individually",
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "Widget"
+              ]
+            },
+            "rounding": {
+              "description": "Rounding values for the 4 corners. Can be a single or 4 values.",
+              "anyOf": [
+                {
+                  "description": "All 4 corners are the same",
+                  "type": "number",
+                  "format": "float"
+                },
+                {
+                  "description": "All 4 corners are custom. Order: NW, NE, SW, SE",
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "format": "float"
+                  },
+                  "maxItems": 4,
+                  "minItems": 4
+                }
+              ]
+            },
+            "style": {
+              "description": "Styles for the grouping",
+              "oneOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "Default"
+                  ]
+                },
+                {
+                  "description": "A shadow is added under the default group. (blur: 4, offset: x-1 y-1, spread: 3)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithShadowB4O1S3"
+                  ]
+                },
+                {
+                  "description": "A shadow is added under the default group. (blur: 4, offset: x-0 y-0, spread: 3)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithShadowB4O0S3"
+                  ]
+                },
+                {
+                  "description": "A shadow is added under the default group. (blur: 0, offset: x-1 y-1, spread: 3)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithShadowB0O1S3"
+                  ]
+                },
+                {
+                  "description": "A glow is added under the default group. (blur: 3, offset: x-1 y-1, spread: 2)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithGlowB3O1S2"
+                  ]
+                },
+                {
+                  "description": "A glow is added under the default group. (blur: 3, offset: x-0 y-0, spread: 2)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithGlowB3O0S2"
+                  ]
+                },
+                {
+                  "description": "A glow is added under the default group. (blur: 0, offset: x-1 y-1, spread: 2)",
+                  "type": "string",
+                  "enum": [
+                    "DefaultWithGlowB0O1S2"
+                  ]
+                }
+              ]
+            },
+            "transparency_alpha": {
+              "description": "Alpha value for the color transparency [[0-255]] (default: 200)",
+              "type": "integer",
+              "format": "uint8",
+              "minimum": 0.0
+            }
+          }
+        }
+      ]
+    },
+    "height": {
+      "description": "Bar height (default: 50)",
+      "type": "number",
+      "format": "float"
+    },
+    "icon_scale": {
+      "description": "Scale of the icons relative to the font_size [[1.0-2.0]]. (default: 1.4)",
+      "type": "number",
+      "format": "float"
+    },
+    "left_widgets": {
+      "description": "Left side widgets (ordered left-to-right)",
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "Battery"
+            ],
+            "properties": {
+              "Battery": {
+                "type": "object",
+                "required": [
+                  "enable"
+                ],
+                "properties": {
+                  "data_refresh_interval": {
+                    "description": "Data refresh interval (default: 10 seconds)",
+                    "type": "integer",
+                    "format": "uint64",
+                    "minimum": 0.0
+                  },
+                  "enable": {
+                    "description": "Enable the Battery widget",
+                    "type": "boolean"
+                  },
+                  "hide_on_full_charge": {
+                    "description": "Hide the widget if the battery is at full charge",
+                    "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Cpu"
+            ],
+            "properties": {
+              "Cpu": {
+                "type": "object",
+                "required": [
+                  "enable"
+                ],
+                "properties": {
+                  "data_refresh_interval": {
+                    "description": "Data refresh interval (default: 10 seconds)",
+                    "type": "integer",
+                    "format": "uint64",
+                    "minimum": 0.0
+                  },
+                  "enable": {
+                    "description": "Enable the Cpu widget",
+                    "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Date"
+            ],
+            "properties": {
+              "Date": {
+                "type": "object",
+                "required": [
+                  "enable",
+                  "format"
+                ],
+                "properties": {
+                  "enable": {
+                    "description": "Enable the Date widget",
+                    "type": "boolean"
+                  },
+                  "format": {
+                    "description": "Set the Date format",
+                    "oneOf": [
+                      {
+                        "description": "Month/Date/Year format (09/08/24)",
+                        "type": "string",
+                        "enum": [
+                          "MonthDateYear"
+                        ]
+                      },
+                      {
+                        "description": "Year-Month-Date format (2024-09-08)",
+                        "type": "string",
+                        "enum": [
+                          "YearMonthDate"
+                        ]
+                      },
+                      {
+                        "description": "Date-Month-Year format (8-Sep-2024)",
+                        "type": "string",
+                        "enum": [
+                          "DateMonthYear"
+                        ]
+                      },
+                      {
+                        "description": "Day Date Month Year format (8 September 2024)",
+                        "type": "string",
+                        "enum": [
+                          "DayDateMonthYear"
+                        ]
+                      },
+                      {
+                        "description": "Custom format (https://docs.rs/chrono/latest/chrono/format/strftime/index.html)",
+                        "type": "object",
+                        "required": [
+                          "Custom"
+                        ],
+                        "properties": {
+                          "Custom": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "description": "Custom format with modifiers",
+                        "type": "object",
+                        "required": [
+                          "CustomModifiers"
+                        ],
+                        "properties": {
+                          "CustomModifiers": {
+                            "description": "Custom format with additive modifiers for integer format specifiers",
+                            "type": "object",
+                            "required": [
+                              "format",
+                              "modifiers"
+                            ],
+                            "properties": {
+                              "format": {
+                                "description": "Custom format (https://docs.rs/chrono/latest/chrono/format/strftime/index.html)",
+                                "type": "string"
+                              },
+                              "modifiers": {
+                                "description": "Additive modifiers for integer format specifiers (e.g. { \"%U\": 1 } to increment the zero-indexed week number by 1)",
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "integer",
+                                  "format": "int32"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Komorebi"
+            ],
+            "properties": {
+              "Komorebi": {
+                "type": "object",
+                "properties": {
+                  "configuration_switcher": {
+                    "description": "Configure the Configuration Switcher widget",
+                    "type": "object",
+                    "required": [
+                      "configurations",
+                      "enable"
+                    ],
+                    "properties": {
+                      "configurations": {
+                        "description": "A map of display friendly name => path to configuration.json",
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "enable": {
+                        "description": "Enable the Komorebi Configurations widget",
+                        "type": "boolean"
+                      }
+                    }
+                  },
+                  "focused_window": {
+                    "description": "Configure the Focused Window widget",
+                    "type": "object",
+                    "required": [
+                      "enable"
+                    ],
+                    "properties": {
+                      "display": {
+                        "description": "Display format of the currently focused window",
+                        "oneOf": [
+                          {
+                            "description": "Show only icon",
+                            "type": "string",
+                            "enum": [
+                              "Icon"
+                            ]
+                          },
+                          {
+                            "description": "Show only text",
+                            "type": "string",
+                            "enum": [
+                              "Text"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and text on the rest",
+                            "type": "string",
+                            "enum": [
+                              "TextAndIconOnSelected"
+                            ]
+                          },
+                          {
+                            "description": "Show both icon and text",
+                            "type": "string",
+                            "enum": [
+                              "IconAndText"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and icons on the rest",
+                            "type": "string",
+                            "enum": [
+                              "IconAndTextOnSelected"
+                            ]
+                          }
+                        ]
+                      },
+                      "enable": {
+                        "description": "Enable the Komorebi Focused Window widget",
+                        "type": "boolean"
+                      },
+                      "show_icon": {
+                        "description": "DEPRECATED: use 'display' instead (Show the icon of the currently focused window)",
+                        "type": "boolean"
+                      }
+                    }
+                  },
+                  "layout": {
+                    "description": "Configure the Layout widget",
+                    "type": "object",
+                    "required": [
+                      "enable"
+                    ],
+                    "properties": {
+                      "display": {
+                        "description": "Display format of the current layout",
+                        "oneOf": [
+                          {
+                            "description": "Show only icon",
+                            "type": "string",
+                            "enum": [
+                              "Icon"
+                            ]
+                          },
+                          {
+                            "description": "Show only text",
+                            "type": "string",
+                            "enum": [
+                              "Text"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and text on the rest",
+                            "type": "string",
+                            "enum": [
+                              "TextAndIconOnSelected"
+                            ]
+                          },
+                          {
+                            "description": "Show both icon and text",
+                            "type": "string",
+                            "enum": [
+                              "IconAndText"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and icons on the rest",
+                            "type": "string",
+                            "enum": [
+                              "IconAndTextOnSelected"
+                            ]
+                          }
+                        ]
+                      },
+                      "enable": {
+                        "description": "Enable the Komorebi Layout widget",
+                        "type": "boolean"
+                      },
+                      "options": {
+                        "description": "List of layout options",
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "BSP",
+                                "Columns",
+                                "Rows",
+                                "VerticalStack",
+                                "HorizontalStack",
+                                "UltrawideVerticalStack",
+                                "Grid",
+                                "RightMainVerticalStack"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "workspaces": {
+                    "description": "Configure the Workspaces widget",
+                    "type": "object",
+                    "required": [
+                      "enable",
+                      "hide_empty_workspaces"
+                    ],
+                    "properties": {
+                      "display": {
+                        "description": "Display format of the workspace",
+                        "oneOf": [
+                          {
+                            "description": "Show only icon",
+                            "type": "string",
+                            "enum": [
+                              "Icon"
+                            ]
+                          },
+                          {
+                            "description": "Show only text",
+                            "type": "string",
+                            "enum": [
+                              "Text"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and text on the rest",
+                            "type": "string",
+                            "enum": [
+                              "TextAndIconOnSelected"
+                            ]
+                          },
+                          {
+                            "description": "Show both icon and text",
+                            "type": "string",
+                            "enum": [
+                              "IconAndText"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and icons on the rest",
+                            "type": "string",
+                            "enum": [
+                              "IconAndTextOnSelected"
+                            ]
+                          }
+                        ]
+                      },
+                      "enable": {
+                        "description": "Enable the Komorebi Workspaces widget",
+                        "type": "boolean"
+                      },
+                      "hide_empty_workspaces": {
+                        "description": "Hide workspaces without any windows",
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Media"
+            ],
+            "properties": {
+              "Media": {
+                "type": "object",
+                "required": [
+                  "enable"
+                ],
+                "properties": {
+                  "enable": {
+                    "description": "Enable the Media widget",
+                    "type": "boolean"
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Memory"
+            ],
+            "properties": {
+              "Memory": {
+                "type": "object",
+                "required": [
+                  "enable"
+                ],
+                "properties": {
+                  "data_refresh_interval": {
+                    "description": "Data refresh interval (default: 10 seconds)",
+                    "type": "integer",
+                    "format": "uint64",
+                    "minimum": 0.0
+                  },
+                  "enable": {
+                    "description": "Enable the Memory widget",
+                    "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Network"
+            ],
+            "properties": {
+              "Network": {
+                "type": "object",
+                "required": [
+                  "enable",
+                  "show_network_activity",
+                  "show_total_data_transmitted"
+                ],
+                "properties": {
+                  "data_refresh_interval": {
+                    "description": "Data refresh interval (default: 10 seconds)",
+                    "type": "integer",
+                    "format": "uint64",
+                    "minimum": 0.0
+                  },
+                  "enable": {
+                    "description": "Enable the Network widget",
+                    "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  },
+                  "network_activity_fill_characters": {
+                    "description": "Characters to reserve for network activity data",
+                    "type": "integer",
+                    "format": "uint",
+                    "minimum": 0.0
+                  },
+                  "show_default_interface": {
+                    "description": "Show default interface",
+                    "type": "boolean"
+                  },
+                  "show_network_activity": {
+                    "description": "Show network activity",
+                    "type": "boolean"
+                  },
+                  "show_total_data_transmitted": {
+                    "description": "Show total data transmitted",
+                    "type": "boolean"
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Storage"
+            ],
+            "properties": {
+              "Storage": {
+                "type": "object",
+                "required": [
+                  "enable"
+                ],
+                "properties": {
+                  "data_refresh_interval": {
+                    "description": "Data refresh interval (default: 10 seconds)",
+                    "type": "integer",
+                    "format": "uint64",
+                    "minimum": 0.0
+                  },
+                  "enable": {
+                    "description": "Enable the Storage widget",
+                    "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Time"
+            ],
+            "properties": {
+              "Time": {
+                "type": "object",
+                "required": [
+                  "enable",
+                  "format"
+                ],
+                "properties": {
+                  "enable": {
+                    "description": "Enable the Time widget",
+                    "type": "boolean"
+                  },
+                  "format": {
+                    "description": "Set the Time format",
+                    "oneOf": [
+                      {
+                        "description": "Twelve-hour format (with seconds)",
+                        "type": "string",
+                        "enum": [
+                          "TwelveHour"
+                        ]
+                      },
+                      {
+                        "description": "Twelve-hour format (without seconds)",
+                        "type": "string",
+                        "enum": [
+                          "TwelveHourWithoutSeconds"
+                        ]
+                      },
+                      {
+                        "description": "Twenty-four-hour format (with seconds)",
+                        "type": "string",
+                        "enum": [
+                          "TwentyFourHour"
+                        ]
+                      },
+                      {
+                        "description": "Twenty-four-hour format (without seconds)",
+                        "type": "string",
+                        "enum": [
+                          "TwentyFourHourWithoutSeconds"
+                        ]
+                      },
+                      {
+                        "description": "Twenty-four-hour format displayed as a binary clock with circles (with seconds) (https://en.wikipedia.org/wiki/Binary_clock)",
+                        "type": "string",
+                        "enum": [
+                          "BinaryCircle"
+                        ]
+                      },
+                      {
+                        "description": "Twenty-four-hour format displayed as a binary clock with rectangles (with seconds) (https://en.wikipedia.org/wiki/Binary_clock)",
+                        "type": "string",
+                        "enum": [
+                          "BinaryRectangle"
+                        ]
+                      },
+                      {
+                        "description": "Custom format (https://docs.rs/chrono/latest/chrono/format/strftime/index.html)",
+                        "type": "object",
+                        "required": [
+                          "Custom"
+                        ],
+                        "properties": {
+                          "Custom": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Update"
+            ],
+            "properties": {
+              "Update": {
+                "type": "object",
+                "required": [
+                  "enable"
+                ],
+                "properties": {
+                  "data_refresh_interval": {
+                    "description": "Data refresh interval (default: 12 hours)",
+                    "type": "integer",
+                    "format": "uint64",
+                    "minimum": 0.0
+                  },
+                  "enable": {
+                    "description": "Enable the Update widget",
+                    "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "margin": {
+      "description": "Bar margin. Use one value for all sides or use a grouped margin for horizontal and/or vertical definition which can each take a single value for a symmetric margin or two values for each side, i.e.: ```json \"margin\": { \"horizontal\": 10 } ``` or: ```json \"margin\": { \"vertical\": [top, bottom] } ``` You can also set individual margin on each side like this: ```json \"margin\": { \"top\": 10, \"bottom\": 10, \"left\": 10, \"right\": 10, } ``` By default, margin is set to 0 on all sides.",
+      "anyOf": [
+        {
+          "type": "number",
+          "format": "float"
+        },
+        {
           "type": "object",
           "required": [
             "bottom",
@@ -438,24 +2170,267 @@
           ],
           "properties": {
             "bottom": {
-              "description": "The bottom point in a Win32 Rect",
-              "type": "integer",
-              "format": "int32"
+              "type": "number",
+              "format": "float"
             },
             "left": {
-              "description": "The left point in a Win32 Rect",
-              "type": "integer",
-              "format": "int32"
+              "type": "number",
+              "format": "float"
             },
             "right": {
-              "description": "The right point in a Win32 Rect",
-              "type": "integer",
-              "format": "int32"
+              "type": "number",
+              "format": "float"
             },
             "top": {
-              "description": "The top point in a Win32 Rect",
+              "type": "number",
+              "format": "float"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "horizontal": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "format": "float"
+                },
+                {
+                  "type": "array",
+                  "items": [
+                    {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  ],
+                  "maxItems": 2,
+                  "minItems": 2
+                }
+              ]
+            },
+            "vertical": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "format": "float"
+                },
+                {
+                  "type": "array",
+                  "items": [
+                    {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  ],
+                  "maxItems": 2,
+                  "minItems": 2
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "max_label_width": {
+      "description": "Max label width before text truncation (default: 400.0)",
+      "type": "number",
+      "format": "float"
+    },
+    "monitor": {
+      "description": "The monitor index or the full monitor options",
+      "anyOf": [
+        {
+          "description": "The monitor index where you want the bar to show",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        {
+          "description": "The full monitor options with the index and an optional work_area_offset",
+          "type": "object",
+          "required": [
+            "index"
+          ],
+          "properties": {
+            "index": {
+              "description": "Komorebi monitor index of the monitor on which to render the bar",
               "type": "integer",
-              "format": "int32"
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "work_area_offset": {
+              "description": "Automatically apply a work area offset for this monitor to accommodate the bar",
+              "type": "object",
+              "required": [
+                "bottom",
+                "left",
+                "right",
+                "top"
+              ],
+              "properties": {
+                "bottom": {
+                  "description": "The bottom point in a Win32 Rect",
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "left": {
+                  "description": "The left point in a Win32 Rect",
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "right": {
+                  "description": "The right point in a Win32 Rect",
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "top": {
+                  "description": "The top point in a Win32 Rect",
+                  "type": "integer",
+                  "format": "int32"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "padding": {
+      "description": "Bar padding. Use one value for all sides or use a grouped padding for horizontal and/or vertical definition which can each take a single value for a symmetric padding or two values for each side, i.e.: ```json \"padding\": { \"horizontal\": 10 } ``` or: ```json \"padding\": { \"horizontal\": [left, right] } ``` You can also set individual padding on each side like this: ```json \"padding\": { \"top\": 10, \"bottom\": 10, \"left\": 10, \"right\": 10, } ``` By default, padding is set to 10 on all sides.",
+      "anyOf": [
+        {
+          "type": "number",
+          "format": "float"
+        },
+        {
+          "type": "object",
+          "required": [
+            "bottom",
+            "left",
+            "right",
+            "top"
+          ],
+          "properties": {
+            "bottom": {
+              "type": "number",
+              "format": "float"
+            },
+            "left": {
+              "type": "number",
+              "format": "float"
+            },
+            "right": {
+              "type": "number",
+              "format": "float"
+            },
+            "top": {
+              "type": "number",
+              "format": "float"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "horizontal": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "format": "float"
+                },
+                {
+                  "type": "array",
+                  "items": [
+                    {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  ],
+                  "maxItems": 2,
+                  "minItems": 2
+                }
+              ]
+            },
+            "vertical": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "format": "float"
+                },
+                {
+                  "type": "array",
+                  "items": [
+                    {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  ],
+                  "maxItems": 2,
+                  "minItems": 2
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "position": {
+      "description": "Bar positioning options",
+      "type": "object",
+      "properties": {
+        "end": {
+          "description": "The desired size of the bar from the starting position (usually monitor width x desired height)",
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "description": "X coordinate",
+              "type": "number",
+              "format": "float"
+            },
+            "y": {
+              "description": "Y coordinate",
+              "type": "number",
+              "format": "float"
+            }
+          }
+        },
+        "start": {
+          "description": "The desired starting position of the bar (0,0 = top left of the screen)",
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "description": "X coordinate",
+              "type": "number",
+              "format": "float"
+            },
+            "y": {
+              "description": "Y coordinate",
+              "type": "number",
+              "format": "float"
             }
           }
         }
@@ -487,6 +2462,103 @@
                   "enable": {
                     "description": "Enable the Battery widget",
                     "type": "boolean"
+                  },
+                  "hide_on_full_charge": {
+                    "description": "Hide the widget if the battery is at full charge",
+                    "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Cpu"
+            ],
+            "properties": {
+              "Cpu": {
+                "type": "object",
+                "required": [
+                  "enable"
+                ],
+                "properties": {
+                  "data_refresh_interval": {
+                    "description": "Data refresh interval (default: 10 seconds)",
+                    "type": "integer",
+                    "format": "uint64",
+                    "minimum": 0.0
+                  },
+                  "enable": {
+                    "description": "Enable the Cpu widget",
+                    "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
                   }
                 }
               }
@@ -553,6 +2625,71 @@
                           }
                         },
                         "additionalProperties": false
+                      },
+                      {
+                        "description": "Custom format with modifiers",
+                        "type": "object",
+                        "required": [
+                          "CustomModifiers"
+                        ],
+                        "properties": {
+                          "CustomModifiers": {
+                            "description": "Custom format with additive modifiers for integer format specifiers",
+                            "type": "object",
+                            "required": [
+                              "format",
+                              "modifiers"
+                            ],
+                            "properties": {
+                              "format": {
+                                "description": "Custom format (https://docs.rs/chrono/latest/chrono/format/strftime/index.html)",
+                                "type": "string"
+                              },
+                              "modifiers": {
+                                "description": "Additive modifiers for integer format specifiers (e.g. { \"%U\": 1 } to increment the zero-indexed week number by 1)",
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "integer",
+                                  "format": "int32"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
                       }
                     ]
                   }
@@ -569,9 +2706,6 @@
             "properties": {
               "Komorebi": {
                 "type": "object",
-                "required": [
-                  "workspaces"
-                ],
                 "properties": {
                   "configuration_switcher": {
                     "description": "Configure the Configuration Switcher widget",
@@ -598,16 +2732,55 @@
                     "description": "Configure the Focused Window widget",
                     "type": "object",
                     "required": [
-                      "enable",
-                      "show_icon"
+                      "enable"
                     ],
                     "properties": {
+                      "display": {
+                        "description": "Display format of the currently focused window",
+                        "oneOf": [
+                          {
+                            "description": "Show only icon",
+                            "type": "string",
+                            "enum": [
+                              "Icon"
+                            ]
+                          },
+                          {
+                            "description": "Show only text",
+                            "type": "string",
+                            "enum": [
+                              "Text"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and text on the rest",
+                            "type": "string",
+                            "enum": [
+                              "TextAndIconOnSelected"
+                            ]
+                          },
+                          {
+                            "description": "Show both icon and text",
+                            "type": "string",
+                            "enum": [
+                              "IconAndText"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and icons on the rest",
+                            "type": "string",
+                            "enum": [
+                              "IconAndTextOnSelected"
+                            ]
+                          }
+                        ]
+                      },
                       "enable": {
                         "description": "Enable the Komorebi Focused Window widget",
                         "type": "boolean"
                       },
                       "show_icon": {
-                        "description": "Show the icon of the currently focused window",
+                        "description": "DEPRECATED: use 'display' instead (Show the icon of the currently focused window)",
                         "type": "boolean"
                       }
                     }
@@ -619,9 +2792,82 @@
                       "enable"
                     ],
                     "properties": {
+                      "display": {
+                        "description": "Display format of the current layout",
+                        "oneOf": [
+                          {
+                            "description": "Show only icon",
+                            "type": "string",
+                            "enum": [
+                              "Icon"
+                            ]
+                          },
+                          {
+                            "description": "Show only text",
+                            "type": "string",
+                            "enum": [
+                              "Text"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and text on the rest",
+                            "type": "string",
+                            "enum": [
+                              "TextAndIconOnSelected"
+                            ]
+                          },
+                          {
+                            "description": "Show both icon and text",
+                            "type": "string",
+                            "enum": [
+                              "IconAndText"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and icons on the rest",
+                            "type": "string",
+                            "enum": [
+                              "IconAndTextOnSelected"
+                            ]
+                          }
+                        ]
+                      },
                       "enable": {
                         "description": "Enable the Komorebi Layout widget",
                         "type": "boolean"
+                      },
+                      "options": {
+                        "description": "List of layout options",
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "BSP",
+                                "Columns",
+                                "Rows",
+                                "VerticalStack",
+                                "HorizontalStack",
+                                "UltrawideVerticalStack",
+                                "Grid",
+                                "RightMainVerticalStack"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
                       }
                     }
                   },
@@ -633,6 +2879,46 @@
                       "hide_empty_workspaces"
                     ],
                     "properties": {
+                      "display": {
+                        "description": "Display format of the workspace",
+                        "oneOf": [
+                          {
+                            "description": "Show only icon",
+                            "type": "string",
+                            "enum": [
+                              "Icon"
+                            ]
+                          },
+                          {
+                            "description": "Show only text",
+                            "type": "string",
+                            "enum": [
+                              "Text"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and text on the rest",
+                            "type": "string",
+                            "enum": [
+                              "TextAndIconOnSelected"
+                            ]
+                          },
+                          {
+                            "description": "Show both icon and text",
+                            "type": "string",
+                            "enum": [
+                              "IconAndText"
+                            ]
+                          },
+                          {
+                            "description": "Show an icon and text for the selected element, and icons on the rest",
+                            "type": "string",
+                            "enum": [
+                              "IconAndTextOnSelected"
+                            ]
+                          }
+                        ]
+                      },
                       "enable": {
                         "description": "Enable the Komorebi Workspaces widget",
                         "type": "boolean"
@@ -690,6 +2976,39 @@
                   "enable": {
                     "description": "Enable the Memory widget",
                     "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
                   }
                 }
               }
@@ -720,11 +3039,48 @@
                     "description": "Enable the Network widget",
                     "type": "boolean"
                   },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  },
                   "network_activity_fill_characters": {
                     "description": "Characters to reserve for network activity data",
                     "type": "integer",
                     "format": "uint",
                     "minimum": 0.0
+                  },
+                  "show_default_interface": {
+                    "description": "Show default interface",
+                    "type": "boolean"
                   },
                   "show_network_activity": {
                     "description": "Show network activity",
@@ -760,6 +3116,39 @@
                   "enable": {
                     "description": "Enable the Storage widget",
                     "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
                   }
                 }
               }
@@ -794,10 +3183,38 @@
                         ]
                       },
                       {
+                        "description": "Twelve-hour format (without seconds)",
+                        "type": "string",
+                        "enum": [
+                          "TwelveHourWithoutSeconds"
+                        ]
+                      },
+                      {
                         "description": "Twenty-four-hour format (with seconds)",
                         "type": "string",
                         "enum": [
                           "TwentyFourHour"
+                        ]
+                      },
+                      {
+                        "description": "Twenty-four-hour format (without seconds)",
+                        "type": "string",
+                        "enum": [
+                          "TwentyFourHourWithoutSeconds"
+                        ]
+                      },
+                      {
+                        "description": "Twenty-four-hour format displayed as a binary clock with circles (with seconds) (https://en.wikipedia.org/wiki/Binary_clock)",
+                        "type": "string",
+                        "enum": [
+                          "BinaryCircle"
+                        ]
+                      },
+                      {
+                        "description": "Twenty-four-hour format displayed as a binary clock with rectangles (with seconds) (https://en.wikipedia.org/wiki/Binary_clock)",
+                        "type": "string",
+                        "enum": [
+                          "BinaryRectangle"
                         ]
                       },
                       {
@@ -812,6 +3229,99 @@
                           }
                         },
                         "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "Update"
+            ],
+            "properties": {
+              "Update": {
+                "type": "object",
+                "required": [
+                  "enable"
+                ],
+                "properties": {
+                  "data_refresh_interval": {
+                    "description": "Data refresh interval (default: 12 hours)",
+                    "type": "integer",
+                    "format": "uint64",
+                    "minimum": 0.0
+                  },
+                  "enable": {
+                    "description": "Enable the Update widget",
+                    "type": "boolean"
+                  },
+                  "label_prefix": {
+                    "description": "Display label prefix",
+                    "oneOf": [
+                      {
+                        "description": "Show no prefix",
+                        "type": "string",
+                        "enum": [
+                          "None"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon",
+                        "type": "string",
+                        "enum": [
+                          "Icon"
+                        ]
+                      },
+                      {
+                        "description": "Show text",
+                        "type": "string",
+                        "enum": [
+                          "Text"
+                        ]
+                      },
+                      {
+                        "description": "Show an icon and text",
+                        "type": "string",
+                        "enum": [
+                          "IconAndText"
+                        ]
                       }
                     ]
                   }
@@ -866,6 +3376,7 @@
               ]
             },
             "name": {
+              "description": "Name of the Catppuccin theme (theme previews: https://github.com/catppuccin/catppuccin)",
               "type": "string",
               "enum": [
                 "Frappe",
@@ -912,6 +3423,7 @@
               ]
             },
             "name": {
+              "description": "Name of the Base16 theme (theme previews: https://tinted-theming.github.io/base16-gallery)",
               "type": "string",
               "enum": [
                 "3024",
@@ -1195,51 +3707,16 @@
         }
       ]
     },
-    "viewport": {
-      "description": "Viewport options (see: https://docs.rs/egui/latest/egui/viewport/struct.ViewportBuilder.html)",
-      "type": "object",
-      "properties": {
-        "inner_size": {
-          "description": "The desired size of the bar from the starting position (usually monitor width x desired height)",
-          "type": "object",
-          "required": [
-            "x",
-            "y"
-          ],
-          "properties": {
-            "x": {
-              "description": "X coordinate",
-              "type": "number",
-              "format": "float"
-            },
-            "y": {
-              "description": "Y coordinate",
-              "type": "number",
-              "format": "float"
-            }
-          }
-        },
-        "position": {
-          "description": "The desired starting position of the bar (0,0 = top left of the screen)",
-          "type": "object",
-          "required": [
-            "x",
-            "y"
-          ],
-          "properties": {
-            "x": {
-              "description": "X coordinate",
-              "type": "number",
-              "format": "float"
-            },
-            "y": {
-              "description": "Y coordinate",
-              "type": "number",
-              "format": "float"
-            }
-          }
-        }
-      }
+    "transparency_alpha": {
+      "description": "Alpha value for the color transparency [[0-255]] (default: 200)",
+      "type": "integer",
+      "format": "uint8",
+      "minimum": 0.0
+    },
+    "widget_spacing": {
+      "description": "Spacing between widgets (default: 10.0)",
+      "type": "number",
+      "format": "float"
     }
   }
 }

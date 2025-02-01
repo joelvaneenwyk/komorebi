@@ -1,12 +1,12 @@
+use crate::config::LabelPrefix;
+use crate::render::RenderConfig;
+use crate::selected_frame::SelectableFrame;
 use crate::widget::BarWidget;
-use crate::WIDGET_SPACING;
 use eframe::egui::text::LayoutJob;
+use eframe::egui::Align;
 use eframe::egui::Context;
-use eframe::egui::FontId;
 use eframe::egui::Label;
-use eframe::egui::Sense;
 use eframe::egui::TextFormat;
-use eframe::egui::TextStyle;
 use eframe::egui::Ui;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -14,6 +14,7 @@ use serde::Serialize;
 use starship_battery::units::ratio::percent;
 use starship_battery::Manager;
 use starship_battery::State;
+use std::process::Command;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -21,36 +22,29 @@ use std::time::Instant;
 pub struct BatteryConfig {
     /// Enable the Battery widget
     pub enable: bool,
+    /// Hide the widget if the battery is at full charge
+    pub hide_on_full_charge: Option<bool>,
     /// Data refresh interval (default: 10 seconds)
     pub data_refresh_interval: Option<u64>,
+    /// Display label prefix
+    pub label_prefix: Option<LabelPrefix>,
 }
 
 impl From<BatteryConfig> for Battery {
     fn from(value: BatteryConfig) -> Self {
-        let manager = Manager::new().unwrap();
-        let mut last_state = String::new();
-        let mut state = None;
-
-        if let Ok(mut batteries) = manager.batteries() {
-            if let Some(Ok(first)) = batteries.nth(0) {
-                let percentage = first.state_of_charge().get::<percent>();
-                match first.state() {
-                    State::Charging => state = Some(BatteryState::Charging),
-                    State::Discharging => state = Some(BatteryState::Discharging),
-                    _ => {}
-                }
-
-                last_state = format!("{percentage}%");
-            }
-        }
+        let data_refresh_interval = value.data_refresh_interval.unwrap_or(10);
 
         Self {
             enable: value.enable,
-            manager,
-            last_state,
-            data_refresh_interval: value.data_refresh_interval.unwrap_or(10),
-            state: state.unwrap_or(BatteryState::Discharging),
-            last_updated: Instant::now(),
+            hide_on_full_charge: value.hide_on_full_charge.unwrap_or(false),
+            manager: Manager::new().unwrap(),
+            last_state: String::new(),
+            data_refresh_interval,
+            label_prefix: value.label_prefix.unwrap_or(LabelPrefix::Icon),
+            state: BatteryState::Discharging,
+            last_updated: Instant::now()
+                .checked_sub(Duration::from_secs(data_refresh_interval))
+                .unwrap(),
         }
     }
 }
@@ -62,9 +56,11 @@ pub enum BatteryState {
 
 pub struct Battery {
     pub enable: bool,
+    hide_on_full_charge: bool,
     manager: Manager,
     pub state: BatteryState,
     data_refresh_interval: u64,
+    label_prefix: LabelPrefix,
     last_state: String,
     last_updated: Instant,
 }
@@ -80,13 +76,23 @@ impl Battery {
             if let Ok(mut batteries) = self.manager.batteries() {
                 if let Some(Ok(first)) = batteries.nth(0) {
                     let percentage = first.state_of_charge().get::<percent>();
-                    match first.state() {
-                        State::Charging => self.state = BatteryState::Charging,
-                        State::Discharging => self.state = BatteryState::Discharging,
-                        _ => {}
-                    }
 
-                    output = format!("{percentage:.0}%");
+                    if percentage == 100.0 && self.hide_on_full_charge {
+                        output = String::new()
+                    } else {
+                        match first.state() {
+                            State::Charging => self.state = BatteryState::Charging,
+                            State::Discharging => self.state = BatteryState::Discharging,
+                            _ => {}
+                        }
+
+                        output = match self.label_prefix {
+                            LabelPrefix::Text | LabelPrefix::IconAndText => {
+                                format!("BAT: {percentage:.0}%")
+                            }
+                            LabelPrefix::None | LabelPrefix::Icon => format!("{percentage:.0}%"),
+                        }
+                    }
                 }
             }
 
@@ -99,7 +105,7 @@ impl Battery {
 }
 
 impl BarWidget for Battery {
-    fn render(&mut self, ctx: &Context, ui: &mut Ui) {
+    fn render(&mut self, ctx: &Context, ui: &mut Ui, config: &mut RenderConfig) {
         if self.enable {
             let output = self.output();
             if !output.is_empty() {
@@ -108,16 +114,12 @@ impl BarWidget for Battery {
                     BatteryState::Discharging => egui_phosphor::regular::BATTERY_FULL,
                 };
 
-                let font_id = ctx
-                    .style()
-                    .text_styles
-                    .get(&TextStyle::Body)
-                    .cloned()
-                    .unwrap_or_else(FontId::default);
-
                 let mut layout_job = LayoutJob::simple(
-                    emoji.to_string(),
-                    font_id.clone(),
+                    match self.label_prefix {
+                        LabelPrefix::Icon | LabelPrefix::IconAndText => emoji.to_string(),
+                        LabelPrefix::None | LabelPrefix::Text => String::new(),
+                    },
+                    config.icon_font_id.clone(),
                     ctx.style().visuals.selection.stroke.color,
                     100.0,
                 );
@@ -125,17 +127,28 @@ impl BarWidget for Battery {
                 layout_job.append(
                     &output,
                     10.0,
-                    TextFormat::simple(font_id, ctx.style().visuals.text_color()),
+                    TextFormat {
+                        font_id: config.text_font_id.clone(),
+                        color: ctx.style().visuals.text_color(),
+                        valign: Align::Center,
+                        ..Default::default()
+                    },
                 );
 
-                ui.add(
-                    Label::new(layout_job)
-                        .selectable(false)
-                        .sense(Sense::click()),
-                );
+                config.apply_on_widget(false, ui, |ui| {
+                    if SelectableFrame::new(false)
+                        .show(ui, |ui| ui.add(Label::new(layout_job).selectable(false)))
+                        .clicked()
+                    {
+                        if let Err(error) = Command::new("cmd.exe")
+                            .args(["/C", "start", "ms-settings:batterysaver"])
+                            .spawn()
+                        {
+                            eprintln!("{}", error)
+                        }
+                    }
+                });
             }
-
-            ui.add_space(WIDGET_SPACING);
         }
     }
 }
